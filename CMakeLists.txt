@@ -13,7 +13,7 @@ else()
     add_compile_options(-Wall -Wextra -O2)
 endif()
 
-# ---- Source files (always compiled with the C++ compiler) ----
+# ---- Source files (always compiled with the standard C++ compiler) ----
 set(SOURCES
     src/main.cpp
     src/neural_network.cpp
@@ -24,7 +24,6 @@ set(SOURCES
 
 # ---- Try to find ROCm/HIP when requested ----
 if(ENABLE_HIP)
-    # ROCm typically installs to /opt/rocm on Linux
     if(NOT DEFINED HIP_PATH)
         if(DEFINED ENV{HIP_PATH})
             set(HIP_PATH $ENV{HIP_PATH})
@@ -56,18 +55,24 @@ else()
     set(USE_HIP OFF)
 endif()
 
-# ---- Build the executable ----
+# ---- Build ----
 if(USE_HIP)
-    # HIP kernel sources (compiled with hipcc)
-    set(HIP_SOURCES
-        src/gpu_kernels.hip
+    # 1) GPU kernel library -- compiled with hipcc via the HIP language.
+    #    Only this target carries hip::device (which adds --offload-arch).
+    add_library(gpu_kernels STATIC src/gpu_kernels.hip)
+    set_source_files_properties(src/gpu_kernels.hip PROPERTIES LANGUAGE HIP)
+    target_include_directories(gpu_kernels PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
     )
-    set_source_files_properties(${HIP_SOURCES} PROPERTIES LANGUAGE HIP)
+    target_compile_definitions(gpu_kernels PRIVATE USE_HIP)
+    target_link_libraries(gpu_kernels PRIVATE hip::device)
 
-    add_executable(digit_recognizer ${SOURCES} ${HIP_SOURCES})
-
+    # 2) Main executable -- compiled with the standard C++ compiler.
+    #    Uses hip::host for HIP runtime API (hipMalloc, hipMemcpy, etc.)
+    #    without any device offload flags.
+    add_executable(digit_recognizer ${SOURCES})
     target_compile_definitions(digit_recognizer PRIVATE USE_HIP)
-    target_link_libraries(digit_recognizer PRIVATE hip::device)
+    target_link_libraries(digit_recognizer PRIVATE gpu_kernels hip::host)
 
     message(STATUS "==> Building WITH GPU acceleration (AMD ROCm/HIP)")
 else()

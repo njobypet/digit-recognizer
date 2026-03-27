@@ -217,6 +217,10 @@ void GpuBackend::copy_to_host(double* h_dst, const double* d_src, size_t count) 
     hipMemcpy(h_dst, d_src, count * sizeof(double), hipMemcpyDeviceToHost);
 }
 
+void GpuBackend::copy_on_device(double* d_dst, const double* d_src, size_t count) {
+    hipMemcpy(d_dst, d_src, count * sizeof(double), hipMemcpyDeviceToDevice);
+}
+
 void GpuBackend::synchronize() {
     hipDeviceSynchronize();
 }

@@ -341,13 +341,8 @@ void NeuralNetwork::train_gpu(const std::vector<double>& input,
         gpu.matvec_multiply(gpu_layers_[l].d_weights, d_activations[l],
                             d_pre_activations[l], gpu_layers_[l].d_biases, rows, cols);
 
-        // Copy pre-activation to activation, then apply activation in-place
-        gpu.copy_to_device(d_activations[l + 1], nullptr, 0); // no-op placeholder
-        // Actually copy z -> activation, then activate
-        // We need to copy d_pre_activations[l] to d_activations[l+1] on device
-        // Use hipMemcpyDeviceToDevice
-        hipMemcpy(d_activations[l + 1], d_pre_activations[l],
-                  rows * sizeof(double), hipMemcpyDeviceToDevice);
+        // Copy pre-activation to activation buffer, then apply activation in-place
+        gpu.copy_on_device(d_activations[l + 1], d_pre_activations[l], rows);
 
         if (is_last) {
             gpu.softmax_forward(d_activations[l + 1], rows);

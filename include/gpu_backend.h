@@ -6,6 +6,10 @@
 #include <chrono>
 #include <cstdint>
 
+#ifdef USE_HIP
+#include <hip/hip_runtime.h>
+#endif
+
 namespace digitrec {
 
 #ifdef USE_HIP
@@ -60,6 +64,7 @@ public:
     void free(double* ptr);
     void copy_to_device(double* d_dst, const double* h_src, size_t count);
     void copy_to_host(double* h_dst, const double* d_src, size_t count);
+    void copy_on_device(double* d_dst, const double* d_src, size_t count);
     void synchronize();
 
     void set_kernel_logging(bool enabled);
