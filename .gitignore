@@ -1,0 +1,28 @@
+# Build artifacts
+build/
+cmake-build-*/
+*.obj
+*.o
+*.exe
+*.out
+*.app
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.sln
+*.vcxproj*
+CMakeSettings.json
+
+# MNIST data (large binary files -- download via scripts)
+data/
+
+# Trained models (regenerate via training)
+*.bin
+
+# OS files
+Thumbs.db
+.DS_Store
