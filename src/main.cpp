@@ -5,11 +5,33 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <csignal>
+#include <random>
+#include <chrono>
+#include <fstream>
+#include <filesystem>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
+namespace fs = std::filesystem;
 
 #ifndef USE_HIP
 bool digitrec::OpLog::cpu_enabled = false;
 bool digitrec::OpLog::gpu_enabled = false;
 #endif
+
+static const char* PID_FILE = ".digit_recognizer.pid";
+static const char* STOP_FILE = ".digit_recognizer.stop";
+
+static volatile bool g_running = true;
+
+static void signal_handler(int) {
+    g_running = false;
+}
 
 void print_usage(const char* program) {
     std::cout << "Digit Recognizer - Handwritten Digit OCR (Numbers Only)\n"
@@ -17,7 +39,7 @@ void print_usage(const char* program) {
               << "Usage:\n"
               << "  " << program << " train <mnist_dir> [options]\n"
               << "  " << program << " test <mnist_dir> --model <model_file>\n"
-              << "  " << program << " predict <image_file> --model <model_file>\n"
+              << "  " << program << " predict <image_file_or_dir> --model <model_file>\n"
               << "  " << program << " predict-multi <image_file> --model <model_file>\n\n"
               << "Commands:\n"
               << "  train          Train the model on MNIST dataset\n"
@@ -32,12 +54,14 @@ void print_usage(const char* program) {
               << "  --gpu              Use AMD GPU acceleration (ROCm/HIP)\n"
               << "  --verbose          Enable all logs (CPU + GPU)\n"
               << "  --cpulogs on|off   Turn CPU logs on or off\n"
-              << "  --gpulogs on|off   Turn GPU logs on or off\n\n"
+              << "  --gpulogs on|off   Turn GPU logs on or off\n"
+              << "  --infinite         Run predict in an infinite loop on random images\n"
+              << "                     (pass a directory as <image_file_or_dir>)\n"
+              << "                     Stop with: stop_digit_recognizer or Ctrl+C\n\n"
               << "Examples:\n"
-              << "  " << program << " predict digit.png --model my_model.bin --cpulogs on\n"
-              << "  " << program << " predict digit.png --model m.bin --gpu --gpulogs on\n"
-              << "  " << program << " predict digit.png --model m.bin --gpu --cpulogs on --gpulogs on\n"
-              << "  " << program << " predict digit.png --model m.bin --verbose --cpulogs off\n";
+              << "  " << program << " predict digit.png --model m.bin\n"
+              << "  " << program << " predict sample_images --model m.bin --infinite --gpu\n"
+              << "  " << program << " predict sample_images --model m.bin --infinite --gpulogs on\n";
 }
 
 struct Config {
@@ -49,7 +73,8 @@ struct Config {
     double learning_rate = 0.005;
     bool use_gpu = false;
     bool verbose = false;
-    int cpulogs = -1;   // -1 = not specified, 0 = off, 1 = on
+    bool infinite = false;
+    int cpulogs = -1;
     int gpulogs = -1;
 };
 
@@ -78,6 +103,8 @@ bool parse_args(int argc, char* argv[], Config& config) {
             config.use_gpu = true;
         } else if (arg == "--verbose") {
             config.verbose = true;
+        } else if (arg == "--infinite") {
+            config.infinite = true;
         } else if (arg == "--cpulogs" && i + 1 < argc) {
             config.cpulogs = parse_on_off(argv[++i]) ? 1 : 0;
         } else if (arg == "--gpulogs" && i + 1 < argc) {
@@ -98,11 +125,9 @@ void try_init_gpu(digitrec::DigitRecognizer& recognizer, bool requested) {
 }
 
 void apply_log_flags(const Config& config) {
-    // --verbose turns both on as a baseline
     bool cpu_on = config.verbose;
     bool gpu_on = config.verbose;
 
-    // --cpulogs and --gpulogs override --verbose when explicitly specified
     if (config.cpulogs != -1) cpu_on = (config.cpulogs == 1);
     if (config.gpulogs != -1) gpu_on = (config.gpulogs == 1);
 
@@ -112,6 +137,38 @@ void apply_log_flags(const Config& config) {
 #ifdef USE_HIP
     digitrec::KernelLog::enabled = gpu_on;
 #endif
+}
+
+void write_pid_file() {
+#ifdef _WIN32
+    int pid = static_cast<int>(_getpid());
+#else
+    int pid = static_cast<int>(getpid());
+#endif
+    std::ofstream f(PID_FILE);
+    f << pid << std::endl;
+}
+
+void cleanup_signal_files() {
+    std::error_code ec;
+    fs::remove(PID_FILE, ec);
+    fs::remove(STOP_FILE, ec);
+}
+
+bool stop_requested() {
+    return fs::exists(STOP_FILE);
+}
+
+std::vector<std::string> collect_images(const std::string& dir) {
+    std::vector<std::string> files;
+    for (auto& entry : fs::directory_iterator(dir)) {
+        if (!entry.is_regular_file()) continue;
+        auto ext = entry.path().extension().string();
+        if (ext == ".bmp" || ext == ".png" || ext == ".jpg" || ext == ".jpeg") {
+            files.push_back(entry.path().string());
+        }
+    }
+    return files;
 }
 
 int cmd_train(const Config& config) {
@@ -139,6 +196,22 @@ int cmd_test(const Config& config) {
     return 0;
 }
 
+void print_prediction(const digitrec::PredictionResult& result) {
+    std::cout << "\nPrediction Results\n"
+              << std::string(30, '-') << "\n"
+              << "Predicted digit: " << result.digit << "\n"
+              << "Confidence:      " << std::fixed << std::setprecision(1)
+              << (result.confidence * 100.0) << "%\n\n"
+              << "All probabilities:\n";
+
+    for (int i = 0; i < 10; ++i) {
+        std::cout << "  " << i << ": "
+                  << std::setprecision(2) << (result.probabilities[i] * 100.0) << "%";
+        if (i == result.digit) std::cout << "  <-- predicted";
+        std::cout << "\n";
+    }
+}
+
 int cmd_predict(const Config& config) {
     digitrec::DigitRecognizer recognizer;
 
@@ -150,27 +223,84 @@ int cmd_predict(const Config& config) {
     try_init_gpu(recognizer, config.use_gpu);
     apply_log_flags(config);
 
-    try {
-        auto result = recognizer.recognize(config.input_path);
-
-        std::cout << "\nPrediction Results\n"
-                  << std::string(30, '-') << "\n"
-                  << "Predicted digit: " << result.digit << "\n"
-                  << "Confidence:      " << std::fixed << std::setprecision(1)
-                  << (result.confidence * 100.0) << "%\n\n"
-                  << "All probabilities:\n";
-
-        for (int i = 0; i < 10; ++i) {
-            std::cout << "  " << i << ": "
-                      << std::setprecision(2) << (result.probabilities[i] * 100.0) << "%";
-            if (i == result.digit) std::cout << "  <-- predicted";
-            std::cout << "\n";
+    if (!config.infinite) {
+        try {
+            auto result = recognizer.recognize(config.input_path);
+            print_prediction(result);
+        } catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 1;
         }
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        return 0;
+    }
+
+    // --- Infinite loop mode ---
+    auto image_files = collect_images(config.input_path);
+    if (image_files.empty()) {
+        std::cerr << "No image files found in " << config.input_path << std::endl;
         return 1;
     }
 
+    signal(SIGINT, signal_handler);
+#ifdef SIGTERM
+    signal(SIGTERM, signal_handler);
+#endif
+
+    cleanup_signal_files();
+    write_pid_file();
+
+    std::cout << "=== Infinite predict mode ===" << std::endl;
+    std::cout << "Images dir:  " << config.input_path << std::endl;
+    std::cout << "Image count: " << image_files.size() << std::endl;
+    std::cout << "GPU:         " << (config.use_gpu ? "yes" : "no") << std::endl;
+    std::cout << "PID file:    " << PID_FILE << std::endl;
+    std::cout << "Stop with:   stop_digit_recognizer  or  Ctrl+C\n" << std::endl;
+
+    std::mt19937 rng(static_cast<unsigned>(
+        std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::uniform_int_distribution<size_t> dist(0, image_files.size() - 1);
+
+    int count = 0;
+    auto start_time = std::chrono::steady_clock::now();
+
+    while (g_running && !stop_requested()) {
+        size_t idx = dist(rng);
+        const auto& img_path = image_files[idx];
+        count++;
+
+        try {
+            auto result = recognizer.recognize(img_path);
+            std::cout << "[" << std::setw(6) << count << "] "
+                      << "digit=" << result.digit
+                      << "  conf=" << std::fixed << std::setprecision(1)
+                      << (result.confidence * 100.0) << "%"
+                      << "  file=" << fs::path(img_path).filename().string()
+                      << std::endl;
+        } catch (const std::exception& e) {
+            std::cout << "[" << std::setw(6) << count << "] "
+                      << "ERROR: " << e.what()
+                      << "  file=" << fs::path(img_path).filename().string()
+                      << std::endl;
+        }
+    }
+
+    auto elapsed = std::chrono::steady_clock::now() - start_time;
+    double secs = std::chrono::duration<double>(elapsed).count();
+
+    std::cout << "\n=== Stopped ===" << std::endl;
+    if (stop_requested()) {
+        std::cout << "Reason: stop_digit_recognizer signal received" << std::endl;
+    } else {
+        std::cout << "Reason: Ctrl+C / SIGINT" << std::endl;
+    }
+    std::cout << "Total predictions: " << count << std::endl;
+    std::cout << "Elapsed: " << std::fixed << std::setprecision(1) << secs << "s" << std::endl;
+    if (count > 0) {
+        std::cout << "Avg per prediction: " << std::setprecision(0)
+                  << (secs / count * 1000.0) << "ms" << std::endl;
+    }
+
+    cleanup_signal_files();
     return 0;
 }
 

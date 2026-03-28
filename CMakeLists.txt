@@ -95,4 +95,7 @@ add_executable(generate_samples tools/generate_samples.cpp)
 # ---- Test: stress test (infinite loop predict on random images) ----
 add_executable(stress_test test/stress_test.cpp)
 
+# ---- Test: stop_digit_recognizer (signals --infinite loop to exit) ----
+add_executable(stop_digit_recognizer test/stop_digit_recognizer.cpp)
+
 install(TARGETS digit_recognizer DESTINATION bin)
