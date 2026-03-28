@@ -59,11 +59,16 @@ digit-recognizer/
 │   ├── download_mnist.ps1      # Windows PowerShell MNIST downloader
 │   └── download_mnist.sh       # Linux/macOS MNIST downloader
 │
-├── sample_images/              # Example digit images for testing
-│   ├── 3.png
-│   ├── 5.png
-│   ├── 6.png
-│   └── 172.png
+├── sample_images/              # 100 MNIST samples + hand-drawn test images
+│   ├── digit_0_0.bmp … digit_9_9.bmp   (10 per digit, from MNIST)
+│   ├── 3.png, 5.png, 6.png, 172.png    (hand-drawn samples)
+│
+├── test/
+│   ├── stress_test.cpp         # External stress test (spawns predict per image)
+│   └── stop_digit_recognizer.cpp  # Signals --infinite loop to exit gracefully
+│
+├── tools/
+│   └── generate_samples.cpp    # Extracts MNIST images to BMP files
 │
 └── data/                       # MNIST files (gitignored; downloaded via scripts)
 ```
@@ -132,7 +137,7 @@ digit_recognizer <command> <path> [options]
 Commands:
   train          Train a new model on MNIST dataset
   test           Evaluate model accuracy on MNIST test set
-  predict        Recognize a single digit from an image file
+  predict        Recognize a single digit from an image file (or directory with --infinite)
   predict-multi  Recognize a sequence of digits from an image file
 
 Options:
@@ -144,6 +149,7 @@ Options:
   --verbose          Enable all diagnostic logs (CPU + GPU)
   --cpulogs on|off   Turn CPU-side logs on or off
   --gpulogs on|off   Turn GPU-side logs on or off
+  --infinite         Run predict in an infinite loop on random images from a directory
 ```
 
 ### Example: Train a Model
@@ -356,6 +362,80 @@ $ ./digit_recognizer predict sample_images/5.png --model digit_model.bin --gpu -
 | `[GPU ...]` | `--gpulogs` | GPU memory alloc/free, kernel launch, kernel complete |
 | `[MEM ...]` | `--gpulogs` | Data transfers: host→device, device→host, device→device |
 | `[LOG ...]` | either | Shared phase markers (shown if either flag is on) |
+
+## Infinite Predict Mode
+
+The `--infinite` flag runs `predict` in a continuous loop, picking random images from a directory. This is useful for GPU burn-in testing, profiling, or long-running demo scenarios.
+
+### Starting the loop
+
+Pass a **directory** (not a single file) as the path argument:
+
+```bash
+$ ./digit_recognizer predict sample_images --model digit_model.bin --infinite --gpu
+
+=== Infinite predict mode ===
+Images dir:  sample_images
+Image count: 104
+GPU:         yes
+PID file:    .digit_recognizer.pid
+Stop with:   stop_digit_recognizer  or  Ctrl+C
+
+[     1] digit=1  conf=97.2%  file=digit_1_5.bmp
+[     2] digit=8  conf=100.0%  file=digit_8_3.bmp
+[     3] digit=4  conf=100.0%  file=digit_4_4.bmp
+[     4] digit=2  conf=100.0%  file=digit_2_9.bmp
+...
+```
+
+All standard flags work with `--infinite`:
+
+```bash
+# Infinite with GPU logs
+./digit_recognizer predict sample_images --model m.bin --infinite --gpu --gpulogs on
+
+# Infinite with all logs
+./digit_recognizer predict sample_images --model m.bin --infinite --verbose
+
+# Infinite CPU-only
+./digit_recognizer predict sample_images --model m.bin --infinite
+```
+
+### Stopping the loop
+
+**Option 1: `stop_digit_recognizer`** (from another terminal)
+
+```bash
+$ ./stop_digit_recognizer
+
+Sending stop signal to digit_recognizer (PID 12345)...
+digit_recognizer stopped successfully.
+```
+
+`stop_digit_recognizer` creates a signal file (`.digit_recognizer.stop`), waits for the loop to exit, and cleans up. The loop finishes its current prediction and exits gracefully with a summary.
+
+**Option 2: Ctrl+C** in the running terminal
+
+Both methods produce a summary on exit:
+
+```
+=== Stopped ===
+Reason: stop_digit_recognizer signal received
+Total predictions: 20819
+Elapsed: 23.0s
+Avg per prediction: 1ms
+```
+
+### How it works
+
+The infinite loop uses cross-platform file-based signaling:
+
+1. `digit_recognizer --infinite` writes its PID to `.digit_recognizer.pid`
+2. Each iteration, it checks if `.digit_recognizer.stop` exists
+3. `stop_digit_recognizer` creates `.digit_recognizer.stop` and waits up to 30 seconds for the PID file to disappear
+4. On exit, `digit_recognizer` removes both `.pid` and `.stop` files
+
+No platform-specific IPC is used -- works identically on Windows and Linux.
 
 ## GPU Kernels
 
