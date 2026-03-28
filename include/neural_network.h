@@ -59,7 +59,6 @@ private:
     void train_cpu(const std::vector<double>& input, const std::vector<double>& target);
 
 #ifdef USE_HIP
-    // GPU device memory for each layer (flat weight matrices, biases)
     struct GpuLayer {
         double* d_weights = nullptr;
         double* d_biases = nullptr;
@@ -68,9 +67,22 @@ private:
     };
     std::vector<GpuLayer> gpu_layers_;
 
+    // Pre-allocated scratch buffers for train_gpu / predict_gpu to avoid
+    // repeated hipMalloc/hipFree per sample (which corrupts the heap).
+    struct GpuScratch {
+        std::vector<double*> activations;    // num_layers + 1
+        std::vector<double*> pre_activations; // num_layers
+        std::vector<double*> deltas;         // num_layers
+        double* target = nullptr;
+        bool allocated = false;
+    };
+    mutable GpuScratch scratch_;
+
     void upload_weights_to_gpu();
     void download_weights_from_gpu();
     void free_gpu_layers();
+    void alloc_scratch();
+    void free_scratch();
 
     std::vector<double> predict_gpu(const std::vector<double>& input) const;
     void train_gpu(const std::vector<double>& input, const std::vector<double>& target);

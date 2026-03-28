@@ -283,6 +283,7 @@ void NeuralNetwork::download_weights_from_gpu() {
 }
 
 void NeuralNetwork::free_gpu_layers() {
+    free_scratch();
     auto& gpu = GpuBackend::instance();
     for (auto& gl : gpu_layers_) {
         gpu.free(gl.d_weights);
@@ -293,19 +294,66 @@ void NeuralNetwork::free_gpu_layers() {
     gpu_layers_.clear();
 }
 
+void NeuralNetwork::alloc_scratch() {
+    if (scratch_.allocated) return;
+    auto& gpu = GpuBackend::instance();
+    size_t num_layers = gpu_layers_.size();
+
+    scratch_.activations.resize(num_layers + 1);
+    scratch_.pre_activations.resize(num_layers);
+    scratch_.deltas.resize(num_layers);
+
+    scratch_.activations[0] = gpu.alloc(layer_sizes_[0]);
+    for (size_t l = 0; l < num_layers; ++l) {
+        int rows = gpu_layers_[l].rows;
+        scratch_.activations[l + 1] = gpu.alloc(rows);
+        scratch_.pre_activations[l] = gpu.alloc(rows);
+        scratch_.deltas[l] = gpu.alloc(rows);
+    }
+    scratch_.target = gpu.alloc(layer_sizes_.back());
+    scratch_.allocated = true;
+
+    OpLog::gpu_phase("Pre-allocated GPU scratch buffers for training/inference");
+}
+
+void NeuralNetwork::free_scratch() {
+    if (!scratch_.allocated) return;
+    auto& gpu = GpuBackend::instance();
+
+    for (auto* p : scratch_.activations) gpu.free(p);
+    for (auto* p : scratch_.pre_activations) gpu.free(p);
+    for (auto* p : scratch_.deltas) gpu.free(p);
+    gpu.free(scratch_.target);
+
+    scratch_.activations.clear();
+    scratch_.pre_activations.clear();
+    scratch_.deltas.clear();
+    scratch_.target = nullptr;
+    scratch_.allocated = false;
+}
+
 std::vector<double> NeuralNetwork::predict_gpu(const std::vector<double>& input) const {
     auto& gpu = GpuBackend::instance();
     size_t num_layers = gpu_layers_.size();
 
     OpLog::gpu_phase("--- GPU predict: begin forward pass ---");
 
-    OpLog::gpu_phase("Allocating GPU memory for input vector...");
-    double* d_input = gpu.alloc(input.size());
+    // Use scratch buffers if available, otherwise allocate temp buffers
+    bool use_scratch = scratch_.allocated;
+    double* d_input;
+    std::vector<double*> temp_buffers;
+
+    if (use_scratch) {
+        d_input = scratch_.activations[0];
+    } else {
+        OpLog::gpu_phase("Allocating GPU memory for input vector...");
+        d_input = gpu.alloc(input.size());
+    }
+
     OpLog::gpu_phase("Copying input data from CPU to GPU...");
     gpu.copy_to_device(d_input, input.data(), input.size());
 
     double* d_current = d_input;
-    std::vector<double*> temp_buffers;
 
     for (size_t l = 0; l < num_layers; ++l) {
         bool is_last = (l == num_layers - 1);
@@ -315,9 +363,14 @@ std::vector<double> NeuralNetwork::predict_gpu(const std::vector<double>& input)
         std::string layer_label = "Layer " + std::to_string(l) + " (" +
             std::to_string(cols) + " -> " + std::to_string(rows) + ")";
 
-        OpLog::gpu_phase(("  " + layer_label + ": allocating output buffer on GPU...").c_str());
-        double* d_output = gpu.alloc(rows);
-        temp_buffers.push_back(d_output);
+        double* d_output;
+        if (use_scratch) {
+            d_output = scratch_.activations[l + 1];
+        } else {
+            OpLog::gpu_phase(("  " + layer_label + ": allocating output buffer on GPU...").c_str());
+            d_output = gpu.alloc(rows);
+            temp_buffers.push_back(d_output);
+        }
 
         OpLog::gpu_phase(("  " + layer_label + ": launching matvec kernel...").c_str());
         gpu.matvec_multiply(gpu_layers_[l].d_weights, d_current, d_output,
@@ -338,14 +391,15 @@ std::vector<double> NeuralNetwork::predict_gpu(const std::vector<double>& input)
     gpu.synchronize();
 
     int out_size = gpu_layers_.back().rows;
-    OpLog::cpu("Allocating result buffer on CPU", out_size * sizeof(double));
     std::vector<double> result(out_size);
     OpLog::gpu_phase("Copying result data from GPU to CPU...");
     gpu.copy_to_host(result.data(), d_current, out_size);
 
-    OpLog::gpu_phase("Freeing temporary GPU memory...");
-    gpu.free(d_input);
-    for (auto* p : temp_buffers) gpu.free(p);
+    if (!use_scratch) {
+        OpLog::gpu_phase("Freeing temporary GPU memory...");
+        gpu.free(d_input);
+        for (auto* p : temp_buffers) gpu.free(p);
+    }
 
     OpLog::gpu_phase("--- GPU predict: forward pass complete ---");
     return result;
@@ -356,57 +410,40 @@ void NeuralNetwork::train_gpu(const std::vector<double>& input,
     auto& gpu = GpuBackend::instance();
     size_t num_layers = gpu_layers_.size();
 
-    // ---- Forward pass: keep all activations and pre-activations on device ----
-    std::vector<double*> d_activations(num_layers + 1);
-    std::vector<double*> d_pre_activations(num_layers);
+    if (!scratch_.allocated) alloc_scratch();
 
-    d_activations[0] = gpu.alloc(input.size());
-    gpu.copy_to_device(d_activations[0], input.data(), input.size());
+    // ---- Forward pass using pre-allocated scratch buffers ----
+    gpu.copy_to_device(scratch_.activations[0], input.data(), input.size());
 
     for (size_t l = 0; l < num_layers; ++l) {
         bool is_last = (l == num_layers - 1);
         int rows = gpu_layers_[l].rows;
         int cols = gpu_layers_[l].cols;
 
-        d_pre_activations[l] = gpu.alloc(rows);
-        d_activations[l + 1] = gpu.alloc(rows);
+        gpu.matvec_multiply(gpu_layers_[l].d_weights, scratch_.activations[l],
+                            scratch_.pre_activations[l], gpu_layers_[l].d_biases, rows, cols);
 
-        // z = W*a + b
-        gpu.matvec_multiply(gpu_layers_[l].d_weights, d_activations[l],
-                            d_pre_activations[l], gpu_layers_[l].d_biases, rows, cols);
-
-        // Copy pre-activation to activation buffer, then apply activation in-place
-        gpu.copy_on_device(d_activations[l + 1], d_pre_activations[l], rows);
+        gpu.copy_on_device(scratch_.activations[l + 1], scratch_.pre_activations[l], rows);
 
         if (is_last) {
-            gpu.softmax_forward(d_activations[l + 1], rows);
+            gpu.softmax_forward(scratch_.activations[l + 1], rows);
         } else {
-            gpu.relu_forward(d_activations[l + 1], rows);
+            gpu.relu_forward(scratch_.activations[l + 1], rows);
         }
     }
 
     // ---- Backward pass ----
-    std::vector<double*> d_deltas(num_layers);
+    gpu.copy_to_device(scratch_.target, target.data(), target.size());
 
-    // Output delta
     int out_size = gpu_layers_[num_layers - 1].rows;
-    d_deltas[num_layers - 1] = gpu.alloc(out_size);
+    gpu.compute_output_delta(scratch_.activations[num_layers], scratch_.target,
+                             scratch_.deltas[num_layers - 1], out_size);
 
-    double* d_target = gpu.alloc(target.size());
-    gpu.copy_to_device(d_target, target.data(), target.size());
-
-    gpu.compute_output_delta(d_activations[num_layers], d_target,
-                             d_deltas[num_layers - 1], out_size);
-    gpu.free(d_target);
-
-    // Hidden layer deltas
     for (int l = static_cast<int>(num_layers) - 2; l >= 0; --l) {
         int current_size = gpu_layers_[l].rows;
         int next_size = gpu_layers_[l + 1].rows;
-
-        d_deltas[l] = gpu.alloc(current_size);
-        gpu.backprop_delta(gpu_layers_[l + 1].d_weights, d_deltas[l + 1],
-                           d_pre_activations[l], d_deltas[l],
+        gpu.backprop_delta(gpu_layers_[l + 1].d_weights, scratch_.deltas[l + 1],
+                           scratch_.pre_activations[l], scratch_.deltas[l],
                            current_size, next_size);
     }
 
@@ -415,16 +452,11 @@ void NeuralNetwork::train_gpu(const std::vector<double>& input,
         int rows = gpu_layers_[l].rows;
         int cols = gpu_layers_[l].cols;
         gpu.update_weights(gpu_layers_[l].d_weights, gpu_layers_[l].d_biases,
-                           d_deltas[l], d_activations[l],
+                           scratch_.deltas[l], scratch_.activations[l],
                            rows, cols, learning_rate_);
     }
 
     gpu.synchronize();
-
-    // ---- Free temporary device memory ----
-    for (size_t l = 0; l <= num_layers; ++l) gpu.free(d_activations[l]);
-    for (size_t l = 0; l < num_layers; ++l) gpu.free(d_pre_activations[l]);
-    for (size_t l = 0; l < num_layers; ++l) gpu.free(d_deltas[l]);
 }
 
 #endif // USE_HIP
@@ -508,17 +540,11 @@ void NeuralNetwork::train_batch(const std::vector<std::vector<double>>& inputs,
         }
 
 #ifdef USE_HIP
-        if (use_gpu_) {
+        if (use_gpu_ && epoch + 1 < epochs) {
             upload_weights_to_gpu();
         }
 #endif
     }
-
-#ifdef USE_HIP
-    if (use_gpu_) {
-        download_weights_from_gpu();
-    }
-#endif
 }
 
 double NeuralNetwork::evaluate(const std::vector<std::vector<double>>& inputs,
