@@ -92,4 +92,7 @@ endif()
 # ---- Utility: generate sample images from MNIST ----
 add_executable(generate_samples tools/generate_samples.cpp)
 
+# ---- Test: stress test (infinite loop predict on random images) ----
+add_executable(stress_test test/stress_test.cpp)
+
 install(TARGETS digit_recognizer DESTINATION bin)
