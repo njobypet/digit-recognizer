@@ -192,7 +192,10 @@ bool GpuBackend::initialize() {
 
 void GpuBackend::shutdown() {
     if (available_) {
-        (void)hipDeviceReset();
+        // Do NOT call hipDeviceReset() here. It invalidates all device
+        // allocations and corrupts the glibc heap when HIP's internal
+        // bookkeeping interacts with malloc during static destruction.
+        // The OS reclaims all GPU resources on process exit.
         available_ = false;
     }
 }

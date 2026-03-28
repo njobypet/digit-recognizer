@@ -285,6 +285,9 @@ void NeuralNetwork::download_weights_from_gpu() {
 void NeuralNetwork::free_gpu_layers() {
     free_scratch();
     auto& gpu = GpuBackend::instance();
+    if (!gpu_layers_.empty()) {
+        gpu.synchronize();
+    }
     for (auto& gl : gpu_layers_) {
         gpu.free(gl.d_weights);
         gpu.free(gl.d_biases);
@@ -319,6 +322,8 @@ void NeuralNetwork::alloc_scratch() {
 void NeuralNetwork::free_scratch() {
     if (!scratch_.allocated) return;
     auto& gpu = GpuBackend::instance();
+
+    gpu.synchronize();
 
     for (auto* p : scratch_.activations) gpu.free(p);
     for (auto* p : scratch_.pre_activations) gpu.free(p);
