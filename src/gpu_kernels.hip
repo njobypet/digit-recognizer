@@ -177,7 +177,7 @@ bool GpuBackend::initialize() {
     }
 
     hipDeviceProp_t props;
-    hipGetDeviceProperties(&props, 0);
+    (void)hipGetDeviceProperties(&props, 0);
     device_name_ = props.name;
 
     std::cout << "[GPU] AMD GPU detected: " << device_name_ << std::endl;
@@ -185,14 +185,14 @@ bool GpuBackend::initialize() {
     std::cout << "[GPU] Global memory: " << (props.totalGlobalMem / (1024 * 1024)) << " MB" << std::endl;
     std::cout << "[GPU] Max threads/block: " << props.maxThreadsPerBlock << std::endl;
 
-    hipSetDevice(0);
+    (void)hipSetDevice(0);
     available_ = true;
     return true;
 }
 
 void GpuBackend::shutdown() {
     if (available_) {
-        hipDeviceReset();
+        (void)hipDeviceReset();
         available_ = false;
     }
 }
@@ -204,40 +204,40 @@ void GpuBackend::set_kernel_logging(bool enabled) {
 double* GpuBackend::alloc(size_t count) {
     double* ptr = nullptr;
     size_t bytes = count * sizeof(double);
-    hipMalloc(&ptr, bytes);
-    OpLog::mem("GPU", "hipMalloc (GPU memory allocated)", bytes, ptr);
+    (void)hipMalloc(&ptr, bytes);
+    OpLog::gpu_mem("hipMalloc (GPU memory allocated)", bytes, ptr);
     return ptr;
 }
 
 void GpuBackend::free(double* ptr) {
     if (ptr) {
-        OpLog::mem("GPU", "hipFree (GPU memory freed)", 0, ptr);
-        hipFree(ptr);
+        OpLog::gpu_mem("hipFree (GPU memory freed)", 0, ptr);
+        (void)hipFree(ptr);
     }
 }
 
 void GpuBackend::copy_to_device(double* d_dst, const double* h_src, size_t count) {
     size_t bytes = count * sizeof(double);
     OpLog::transfer("Copy HOST -> DEVICE (CPU to GPU)", bytes);
-    hipMemcpy(d_dst, h_src, bytes, hipMemcpyHostToDevice);
+    (void)hipMemcpy(d_dst, h_src, bytes, hipMemcpyHostToDevice);
 }
 
 void GpuBackend::copy_to_host(double* h_dst, const double* d_src, size_t count) {
     size_t bytes = count * sizeof(double);
     OpLog::transfer("Copy DEVICE -> HOST (GPU to CPU)", bytes);
-    hipMemcpy(h_dst, d_src, bytes, hipMemcpyDeviceToHost);
+    (void)hipMemcpy(h_dst, d_src, bytes, hipMemcpyDeviceToHost);
 }
 
 void GpuBackend::copy_on_device(double* d_dst, const double* d_src, size_t count) {
     size_t bytes = count * sizeof(double);
     OpLog::transfer("Copy DEVICE -> DEVICE (GPU to GPU)", bytes);
-    hipMemcpy(d_dst, d_src, bytes, hipMemcpyDeviceToDevice);
+    (void)hipMemcpy(d_dst, d_src, bytes, hipMemcpyDeviceToDevice);
 }
 
 void GpuBackend::synchronize() {
-    OpLog::phase("hipDeviceSynchronize -- waiting for all GPU kernels to finish...");
-    hipDeviceSynchronize();
-    OpLog::phase("hipDeviceSynchronize -- complete");
+    OpLog::gpu_phase("hipDeviceSynchronize -- waiting for all GPU kernels to finish...");
+    (void)hipDeviceSynchronize();
+    OpLog::gpu_phase("hipDeviceSynchronize -- complete");
 }
 
 void GpuBackend::matvec_multiply(const double* d_weights, const double* d_input,
