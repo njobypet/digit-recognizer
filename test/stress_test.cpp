@@ -79,19 +79,28 @@ int main(int argc, char* argv[]) {
     std::string model_path = "digit_model.bin";
     std::string images_dir = "sample_images";
     bool use_gpu = false;
+    bool verbose = false;
+    std::string cpulogs;
+    std::string gpulogs;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--exe" && i + 1 < argc)        exe_path = argv[++i];
-        else if (arg == "--model" && i + 1 < argc)  model_path = argv[++i];
-        else if (arg == "--images" && i + 1 < argc)  images_dir = argv[++i];
-        else if (arg == "--gpu")                     use_gpu = true;
+        if (arg == "--exe" && i + 1 < argc)         exe_path = argv[++i];
+        else if (arg == "--model" && i + 1 < argc)   model_path = argv[++i];
+        else if (arg == "--images" && i + 1 < argc)   images_dir = argv[++i];
+        else if (arg == "--gpu")                      use_gpu = true;
+        else if (arg == "--verbose")                  verbose = true;
+        else if (arg == "--cpulogs" && i + 1 < argc)  cpulogs = argv[++i];
+        else if (arg == "--gpulogs" && i + 1 < argc)  gpulogs = argv[++i];
         else if (arg == "--help") {
             std::cout << "Usage: stress_test [options]\n"
-                      << "  --exe <path>      Path to digit_recognizer executable\n"
-                      << "  --model <path>    Path to trained model file\n"
-                      << "  --images <dir>    Path to sample_images directory\n"
-                      << "  --gpu             Pass --gpu flag to digit_recognizer\n"
+                      << "  --exe <path>       Path to digit_recognizer executable\n"
+                      << "  --model <path>     Path to trained model file\n"
+                      << "  --images <dir>     Path to sample_images directory\n"
+                      << "  --gpu              Pass --gpu flag to digit_recognizer\n"
+                      << "  --verbose          Pass --verbose to digit_recognizer\n"
+                      << "  --cpulogs on|off   Pass --cpulogs to digit_recognizer\n"
+                      << "  --gpulogs on|off   Pass --gpulogs to digit_recognizer\n"
                       << "\nRuns predict in an infinite loop on random images.\n"
                       << "Press Ctrl+C to stop and see summary.\n";
             return 0;
@@ -124,6 +133,9 @@ int main(int argc, char* argv[]) {
     std::cout << "Images dir:   " << images_dir << std::endl;
     std::cout << "Image count:  " << image_files.size() << std::endl;
     std::cout << "GPU:          " << (use_gpu ? "yes" : "no") << std::endl;
+    std::cout << "Verbose:      " << (verbose ? "yes" : "no") << std::endl;
+    if (!cpulogs.empty()) std::cout << "CPU logs:     " << cpulogs << std::endl;
+    if (!gpulogs.empty()) std::cout << "GPU logs:     " << gpulogs << std::endl;
     std::cout << "Press Ctrl+C to stop.\n" << std::endl;
 
     std::mt19937 rng(static_cast<unsigned>(
@@ -138,9 +150,12 @@ int main(int argc, char* argv[]) {
         const auto& img_path = image_files[idx];
         int expected = extract_expected_digit(img_path);
 
-        std::string cmd = exe_path + " predict " + img_path +
-                          " --model " + model_path;
+        std::string cmd = exe_path + " predict \"" + img_path +
+                          "\" --model " + model_path;
         if (use_gpu) cmd += " --gpu";
+        if (verbose) cmd += " --verbose";
+        if (!cpulogs.empty()) cmd += " --cpulogs " + cpulogs;
+        if (!gpulogs.empty()) cmd += " --gpulogs " + gpulogs;
 
         int exit_code = 0;
         std::string output = run_command(cmd, exit_code);
