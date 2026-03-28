@@ -155,7 +155,8 @@ __global__ void kernel_update_weights(double* __restrict__ weights,
 // ===========================================================================
 
 bool KernelLog::enabled = true;
-bool OpLog::enabled = false;
+bool OpLog::cpu_enabled = false;
+bool OpLog::gpu_enabled = false;
 
 GpuBackend& GpuBackend::instance() {
     static GpuBackend g;
@@ -197,11 +198,6 @@ void GpuBackend::shutdown() {
 }
 
 void GpuBackend::set_kernel_logging(bool enabled) {
-    KernelLog::enabled = enabled;
-}
-
-void GpuBackend::set_verbose(bool enabled) {
-    OpLog::enabled = enabled;
     KernelLog::enabled = enabled;
 }
 

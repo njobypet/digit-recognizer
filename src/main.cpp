@@ -7,7 +7,8 @@
 #include <cstring>
 
 #ifndef USE_HIP
-bool digitrec::OpLog::enabled = false;
+bool digitrec::OpLog::cpu_enabled = false;
+bool digitrec::OpLog::gpu_enabled = false;
 #endif
 
 void print_usage(const char* program) {
@@ -24,16 +25,19 @@ void print_usage(const char* program) {
               << "  predict        Recognize a single digit from an image\n"
               << "  predict-multi  Recognize multiple digits from an image\n\n"
               << "Options:\n"
-              << "  --model <file>   Path to model file (default: digit_model.bin)\n"
-              << "  --epochs <n>     Training epochs (default: 10)\n"
-              << "  --batch <n>      Batch size (default: 32)\n"
-              << "  --lr <rate>      Learning rate (default: 0.005)\n"
-              << "  --gpu            Use AMD GPU acceleration (ROCm/HIP)\n"
-              << "  --verbose        Print detailed logs (memory, kernels, data transfers)\n\n"
+              << "  --model <file>     Path to model file (default: digit_model.bin)\n"
+              << "  --epochs <n>       Training epochs (default: 10)\n"
+              << "  --batch <n>        Batch size (default: 32)\n"
+              << "  --lr <rate>        Learning rate (default: 0.005)\n"
+              << "  --gpu              Use AMD GPU acceleration (ROCm/HIP)\n"
+              << "  --verbose          Enable all logs (CPU + GPU)\n"
+              << "  --cpulogs on|off   Turn CPU logs on or off\n"
+              << "  --gpulogs on|off   Turn GPU logs on or off\n\n"
               << "Examples:\n"
-              << "  " << program << " train ./data --epochs 15 --gpu --model my_model.bin\n"
-              << "  " << program << " predict digit.png --model my_model.bin --verbose\n"
-              << "  " << program << " predict digit.png --model my_model.bin --gpu --verbose\n";
+              << "  " << program << " predict digit.png --model my_model.bin --cpulogs on\n"
+              << "  " << program << " predict digit.png --model m.bin --gpu --gpulogs on\n"
+              << "  " << program << " predict digit.png --model m.bin --gpu --cpulogs on --gpulogs on\n"
+              << "  " << program << " predict digit.png --model m.bin --verbose --cpulogs off\n";
 }
 
 struct Config {
@@ -45,7 +49,14 @@ struct Config {
     double learning_rate = 0.005;
     bool use_gpu = false;
     bool verbose = false;
+    int cpulogs = -1;   // -1 = not specified, 0 = off, 1 = on
+    int gpulogs = -1;
 };
+
+bool parse_on_off(const char* value) {
+    std::string v = value;
+    return (v == "on" || v == "1" || v == "true" || v == "yes");
+}
 
 bool parse_args(int argc, char* argv[], Config& config) {
     if (argc < 3) return false;
@@ -67,6 +78,10 @@ bool parse_args(int argc, char* argv[], Config& config) {
             config.use_gpu = true;
         } else if (arg == "--verbose") {
             config.verbose = true;
+        } else if (arg == "--cpulogs" && i + 1 < argc) {
+            config.cpulogs = parse_on_off(argv[++i]) ? 1 : 0;
+        } else if (arg == "--gpulogs" && i + 1 < argc) {
+            config.gpulogs = parse_on_off(argv[++i]) ? 1 : 0;
         } else {
             std::cerr << "Unknown option: " << arg << std::endl;
             return false;
@@ -82,16 +97,27 @@ void try_init_gpu(digitrec::DigitRecognizer& recognizer, bool requested) {
     }
 }
 
-void enable_verbose(const Config& config) {
-    if (!config.verbose) return;
-    digitrec::OpLog::enabled = true;
-    auto& gpu = digitrec::GpuBackend::instance();
-    gpu.set_verbose(true);
+void apply_log_flags(const Config& config) {
+    // --verbose turns both on as a baseline
+    bool cpu_on = config.verbose;
+    bool gpu_on = config.verbose;
+
+    // --cpulogs and --gpulogs override --verbose when explicitly specified
+    if (config.cpulogs != -1) cpu_on = (config.cpulogs == 1);
+    if (config.gpulogs != -1) gpu_on = (config.gpulogs == 1);
+
+    digitrec::OpLog::cpu_enabled = cpu_on;
+    digitrec::OpLog::gpu_enabled = gpu_on;
+
+#ifdef USE_HIP
+    digitrec::KernelLog::enabled = gpu_on;
+#endif
 }
 
 int cmd_train(const Config& config) {
     digitrec::DigitRecognizer recognizer;
     try_init_gpu(recognizer, config.use_gpu);
+    apply_log_flags(config);
 
     recognizer.train_on_mnist(config.input_path, config.epochs, config.batch_size);
     recognizer.save_model(config.model_path);
@@ -108,6 +134,7 @@ int cmd_test(const Config& config) {
     }
 
     try_init_gpu(recognizer, config.use_gpu);
+    apply_log_flags(config);
     recognizer.test_on_mnist(config.input_path);
     return 0;
 }
@@ -121,7 +148,7 @@ int cmd_predict(const Config& config) {
     }
 
     try_init_gpu(recognizer, config.use_gpu);
-    enable_verbose(config);
+    apply_log_flags(config);
 
     try {
         auto result = recognizer.recognize(config.input_path);
@@ -156,7 +183,7 @@ int cmd_predict_multi(const Config& config) {
     }
 
     try_init_gpu(recognizer, config.use_gpu);
-    enable_verbose(config);
+    apply_log_flags(config);
 
     try {
         auto result = recognizer.recognize_multi_digit(config.input_path);

@@ -131,8 +131,8 @@ std::vector<double> NeuralNetwork::forward_layer_cpu(const std::vector<double>& 
 }
 
 std::vector<double> NeuralNetwork::predict_cpu(const std::vector<double>& input) const {
-    OpLog::phase("--- CPU predict: begin forward pass ---");
-    OpLog::mem("CPU", "Input vector allocated on CPU", input.size() * sizeof(double));
+    OpLog::cpu_phase("--- CPU predict: begin forward pass ---");
+    OpLog::cpu("Input vector allocated on CPU", input.size() * sizeof(double));
 
     std::vector<double> current = input;
     for (size_t i = 0; i < layers_.size(); ++i) {
@@ -142,20 +142,20 @@ std::vector<double> NeuralNetwork::predict_cpu(const std::vector<double>& input)
 
         std::string layer_label = "Layer " + std::to_string(i) + " (" +
             std::to_string(in_size) + " -> " + std::to_string(out_size) + ")";
-        OpLog::phase(("  " + layer_label + ": computing matvec on CPU...").c_str());
-        OpLog::mem("CPU", ("  " + layer_label + ": output buffer allocated on CPU").c_str(),
+        OpLog::cpu_phase(("  " + layer_label + ": computing matvec on CPU...").c_str());
+        OpLog::cpu(("  " + layer_label + ": output buffer allocated on CPU").c_str(),
                    out_size * sizeof(double));
 
         current = forward_layer_cpu(current, layers_[i], !is_last);
 
         if (!is_last) {
-            OpLog::phase(("  " + layer_label + ": applied ReLU activation").c_str());
+            OpLog::cpu_phase(("  " + layer_label + ": applied ReLU activation").c_str());
         }
     }
 
-    OpLog::phase("  Output layer: computing softmax on CPU...");
+    OpLog::cpu_phase("  Output layer: computing softmax on CPU...");
     auto result = softmax(current);
-    OpLog::phase("--- CPU predict: forward pass complete ---");
+    OpLog::cpu_phase("--- CPU predict: forward pass complete ---");
     return result;
 }
 
@@ -297,11 +297,11 @@ std::vector<double> NeuralNetwork::predict_gpu(const std::vector<double>& input)
     auto& gpu = GpuBackend::instance();
     size_t num_layers = gpu_layers_.size();
 
-    OpLog::phase("--- GPU predict: begin forward pass ---");
+    OpLog::gpu_phase("--- GPU predict: begin forward pass ---");
 
-    OpLog::phase("Allocating GPU memory for input vector...");
+    OpLog::gpu_phase("Allocating GPU memory for input vector...");
     double* d_input = gpu.alloc(input.size());
-    OpLog::phase("Copying input data from CPU to GPU...");
+    OpLog::gpu_phase("Copying input data from CPU to GPU...");
     gpu.copy_to_device(d_input, input.data(), input.size());
 
     double* d_current = d_input;
@@ -315,39 +315,39 @@ std::vector<double> NeuralNetwork::predict_gpu(const std::vector<double>& input)
         std::string layer_label = "Layer " + std::to_string(l) + " (" +
             std::to_string(cols) + " -> " + std::to_string(rows) + ")";
 
-        OpLog::phase(("  " + layer_label + ": allocating output buffer on GPU...").c_str());
+        OpLog::gpu_phase(("  " + layer_label + ": allocating output buffer on GPU...").c_str());
         double* d_output = gpu.alloc(rows);
         temp_buffers.push_back(d_output);
 
-        OpLog::phase(("  " + layer_label + ": launching matvec kernel...").c_str());
+        OpLog::gpu_phase(("  " + layer_label + ": launching matvec kernel...").c_str());
         gpu.matvec_multiply(gpu_layers_[l].d_weights, d_current, d_output,
                             gpu_layers_[l].d_biases, rows, cols);
 
         if (!is_last) {
-            OpLog::phase(("  " + layer_label + ": launching ReLU kernel...").c_str());
+            OpLog::gpu_phase(("  " + layer_label + ": launching ReLU kernel...").c_str());
             gpu.relu_forward(d_output, rows);
         } else {
-            OpLog::phase(("  " + layer_label + ": launching softmax kernel...").c_str());
+            OpLog::gpu_phase(("  " + layer_label + ": launching softmax kernel...").c_str());
             gpu.softmax_forward(d_output, rows);
         }
 
         d_current = d_output;
     }
 
-    OpLog::phase("Synchronizing GPU (waiting for all kernels to complete)...");
+    OpLog::gpu_phase("Synchronizing GPU (waiting for all kernels to complete)...");
     gpu.synchronize();
 
     int out_size = gpu_layers_.back().rows;
-    OpLog::mem("CPU", "Allocating result buffer on CPU", out_size * sizeof(double));
+    OpLog::cpu("Allocating result buffer on CPU", out_size * sizeof(double));
     std::vector<double> result(out_size);
-    OpLog::phase("Copying result data from GPU to CPU...");
+    OpLog::gpu_phase("Copying result data from GPU to CPU...");
     gpu.copy_to_host(result.data(), d_current, out_size);
 
-    OpLog::phase("Freeing temporary GPU memory...");
+    OpLog::gpu_phase("Freeing temporary GPU memory...");
     gpu.free(d_input);
     for (auto* p : temp_buffers) gpu.free(p);
 
-    OpLog::phase("--- GPU predict: forward pass complete ---");
+    OpLog::gpu_phase("--- GPU predict: forward pass complete ---");
     return result;
 }
 
