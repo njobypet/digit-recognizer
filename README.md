@@ -136,11 +136,14 @@ Commands:
   predict-multi  Recognize a sequence of digits from an image file
 
 Options:
-  --model <file>   Model file path         (default: digit_model.bin)
-  --epochs <n>     Number of training passes (default: 10)
-  --batch <n>      Mini-batch size          (default: 32)
-  --lr <rate>      Learning rate            (default: 0.005)
-  --gpu            Enable AMD GPU (ROCm/HIP)
+  --model <file>     Model file path              (default: digit_model.bin)
+  --epochs <n>       Number of training passes    (default: 10)
+  --batch <n>        Mini-batch size              (default: 32)
+  --lr <rate>        Learning rate                (default: 0.005)
+  --gpu              Enable AMD GPU (ROCm/HIP)
+  --verbose          Enable all diagnostic logs (CPU + GPU)
+  --cpulogs on|off   Turn CPU-side logs on or off
+  --gpulogs on|off   Turn GPU-side logs on or off
 ```
 
 ### Example: Train a Model
@@ -243,6 +246,116 @@ Epoch   1/15 | Loss: 0.0587 | Accuracy: 97.03%
 ```
 
 Kernel logging is throttled to the first batch of each epoch to keep output readable.
+
+## Diagnostic Logging
+
+Three flags control the verbosity of console logs during `predict` and `predict-multi`:
+
+| Flag | Description |
+|------|-------------|
+| `--cpulogs on` | Show CPU-side logs: image loading, memory allocation, preprocessing, CPU inference steps |
+| `--cpulogs off` | Suppress all CPU-side logs |
+| `--gpulogs on` | Show GPU-side logs: `hipMalloc`/`hipFree`, host↔device data copies, kernel launch and completion |
+| `--gpulogs off` | Suppress all GPU-side logs |
+| `--verbose` | Shorthand for `--cpulogs on --gpulogs on` |
+
+When both `--verbose` and an explicit `--cpulogs`/`--gpulogs` flag are given, the explicit flag takes precedence. This lets you use `--verbose` as a baseline and selectively silence one side.
+
+### Example: CPU logs only
+
+```bash
+$ ./digit_recognizer predict sample_images/5.png --model digit_model.bin --cpulogs on
+
+Model loaded from: digit_model.bin
+[CPU 35620065ms] === Loading and preprocessing image ===
+[CPU 35620065ms] Image path: sample_images/5.png
+[CPU 35620065ms] Loading image from disk...
+[CPU 35620067ms] Loaded: 1152x720 pixels, 4 channels
+[CPU 35620067ms] Raw image pixel buffer allocated on CPU  size=3317760 bytes
+[CPU 35620067ms] Preprocessing: grayscale, auto-invert, center, normalize...
+[CPU 35620070ms] Preprocessed input vector (28x28 = 784 doubles) on CPU  size=6272 bytes
+[CPU 35620070ms] === Preprocessing complete ===
+[LOG 35620070ms] === Running neural network inference ===
+[LOG 35620070ms] Compute path: CPU
+[CPU 35620070ms] --- CPU predict: begin forward pass ---
+[CPU 35620070ms] Input vector allocated on CPU  size=6272 bytes
+[CPU 35620070ms]   Layer 0 (784 -> 256): computing matvec on CPU...
+[CPU 35620070ms]   Layer 0 (784 -> 256): output buffer allocated on CPU  size=2048 bytes
+[CPU 35620070ms]   Layer 0 (784 -> 256): applied ReLU activation
+[CPU 35620070ms]   Layer 1 (256 -> 128): computing matvec on CPU...
+[CPU 35620070ms]   Layer 1 (256 -> 128): output buffer allocated on CPU  size=1024 bytes
+[CPU 35620070ms]   Layer 1 (256 -> 128): applied ReLU activation
+[CPU 35620070ms]   Layer 2 (128 -> 10): computing matvec on CPU...
+[CPU 35620070ms]   Layer 2 (128 -> 10): output buffer allocated on CPU  size=80 bytes
+[CPU 35620070ms]   Output layer: computing softmax on CPU...
+[CPU 35620070ms] --- CPU predict: forward pass complete ---
+[LOG 35620070ms] === Inference complete: digit=5 confidence=87.53% ===
+
+Prediction Results
+------------------------------
+Predicted digit: 5
+Confidence:      87.5%
+```
+
+### Example: GPU logs only
+
+```bash
+$ ./digit_recognizer predict sample_images/5.png --model digit_model.bin --gpu --gpulogs on
+
+Model loaded from: digit_model.bin
+[GPU 12345678ms] --- GPU predict: begin forward pass ---
+[GPU 12345678ms] Allocating GPU memory for input vector...
+[GPU 12345678ms] hipMalloc (GPU memory allocated)  size=6272 bytes  ptr=0x7f...
+[GPU 12345679ms] Copying input data from CPU to GPU...
+[MEM 12345679ms] Copy HOST -> DEVICE (CPU to GPU)  size=6272 bytes
+[GPU 12345679ms]   Layer 0 (784 -> 256): allocating output buffer on GPU...
+[GPU 12345679ms] hipMalloc (GPU memory allocated)  size=2048 bytes  ptr=0x7f...
+[GPU 12345680ms]   Layer 0 (784 -> 256): launching matvec kernel...
+[GPU 12345680ms] Launching kernel: kernel_matvec  grid(1,1,1)  block(256,1,1)
+[GPU 12345680ms] Kernel complete: kernel_matvec
+[GPU 12345680ms]   Layer 0 (784 -> 256): launching ReLU kernel...
+[GPU 12345680ms] Launching kernel: kernel_relu  grid(1,1,1)  block(256,1,1)
+[GPU 12345681ms] Kernel complete: kernel_relu
+...
+[GPU 12345682ms] Synchronizing GPU (waiting for all kernels to complete)...
+[GPU 12345682ms] hipDeviceSynchronize -- waiting for all GPU kernels to finish...
+[GPU 12345682ms] hipDeviceSynchronize -- complete
+[GPU 12345683ms] Copying result data from GPU to CPU...
+[MEM 12345683ms] Copy DEVICE -> HOST (GPU to CPU)  size=80 bytes
+[GPU 12345683ms] Freeing temporary GPU memory...
+[GPU 12345683ms] hipFree (GPU memory freed)  ptr=0x7f...
+[GPU 12345684ms] --- GPU predict: forward pass complete ---
+
+Prediction Results
+------------------------------
+Predicted digit: 5
+Confidence:      87.5%
+```
+
+### Example: All logs (verbose)
+
+```bash
+$ ./digit_recognizer predict sample_images/5.png --model digit_model.bin --gpu --verbose
+```
+
+This prints both CPU and GPU logs interleaved in execution order.
+
+### Example: Verbose with CPU logs suppressed
+
+```bash
+$ ./digit_recognizer predict sample_images/5.png --model digit_model.bin --gpu --verbose --cpulogs off
+```
+
+`--verbose` enables both, then `--cpulogs off` overrides just the CPU side, leaving only GPU logs.
+
+### Log Tag Reference
+
+| Tag | Source | Meaning |
+|-----|--------|---------|
+| `[CPU ...]` | `--cpulogs` | CPU memory allocation, preprocessing, CPU inference |
+| `[GPU ...]` | `--gpulogs` | GPU memory alloc/free, kernel launch, kernel complete |
+| `[MEM ...]` | `--gpulogs` | Data transfers: host→device, device→host, device→device |
+| `[LOG ...]` | either | Shared phase markers (shown if either flag is on) |
 
 ## GPU Kernels
 
