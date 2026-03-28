@@ -536,6 +536,8 @@ void NeuralNetwork::train_batch(const std::vector<std::vector<double>>& inputs,
             if (!OpLog::gpu_enabled) {
                 GpuBackend::instance().set_kernel_logging(true);
             }
+            // Copy weights to CPU for evaluation/saving. GPU weights
+            // remain valid -- no re-upload needed for the next epoch.
             download_weights_from_gpu();
         }
 #endif
@@ -543,12 +545,6 @@ void NeuralNetwork::train_batch(const std::vector<std::vector<double>>& inputs,
         if (on_epoch) {
             on_epoch(epoch, total_loss / static_cast<double>(n));
         }
-
-#ifdef USE_HIP
-        if (use_gpu_ && epoch + 1 < epochs) {
-            upload_weights_to_gpu();
-        }
-#endif
     }
 }
 
