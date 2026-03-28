@@ -475,7 +475,7 @@ void NeuralNetwork::train_batch(const std::vector<std::vector<double>>& inputs,
             size_t end = std::min(start + static_cast<size_t>(batch_size), n);
 
 #ifdef USE_HIP
-            if (use_gpu_) {
+            if (use_gpu_ && !OpLog::gpu_enabled) {
                 GpuBackend::instance().set_kernel_logging(first_batch);
                 first_batch = false;
             }
@@ -496,7 +496,9 @@ void NeuralNetwork::train_batch(const std::vector<std::vector<double>>& inputs,
 
 #ifdef USE_HIP
         if (use_gpu_) {
-            GpuBackend::instance().set_kernel_logging(true);
+            if (!OpLog::gpu_enabled) {
+                GpuBackend::instance().set_kernel_logging(true);
+            }
             download_weights_from_gpu();
         }
 #endif
