@@ -6,6 +6,10 @@
 #include <vector>
 #include <cstring>
 
+#ifndef USE_HIP
+bool digitrec::OpLog::enabled = false;
+#endif
+
 void print_usage(const char* program) {
     std::cout << "Digit Recognizer - Handwritten Digit OCR (Numbers Only)\n"
               << "========================================================\n\n"
@@ -24,11 +28,12 @@ void print_usage(const char* program) {
               << "  --epochs <n>     Training epochs (default: 10)\n"
               << "  --batch <n>      Batch size (default: 32)\n"
               << "  --lr <rate>      Learning rate (default: 0.005)\n"
-              << "  --gpu            Use AMD GPU acceleration (ROCm/HIP)\n\n"
+              << "  --gpu            Use AMD GPU acceleration (ROCm/HIP)\n"
+              << "  --verbose        Print detailed logs (memory, kernels, data transfers)\n\n"
               << "Examples:\n"
               << "  " << program << " train ./data --epochs 15 --gpu --model my_model.bin\n"
-              << "  " << program << " predict digit.png --model my_model.bin\n"
-              << "  " << program << " predict-multi number.png --model my_model.bin --gpu\n";
+              << "  " << program << " predict digit.png --model my_model.bin --verbose\n"
+              << "  " << program << " predict digit.png --model my_model.bin --gpu --verbose\n";
 }
 
 struct Config {
@@ -39,6 +44,7 @@ struct Config {
     int batch_size = 32;
     double learning_rate = 0.005;
     bool use_gpu = false;
+    bool verbose = false;
 };
 
 bool parse_args(int argc, char* argv[], Config& config) {
@@ -59,6 +65,8 @@ bool parse_args(int argc, char* argv[], Config& config) {
             config.learning_rate = std::stod(argv[++i]);
         } else if (arg == "--gpu") {
             config.use_gpu = true;
+        } else if (arg == "--verbose") {
+            config.verbose = true;
         } else {
             std::cerr << "Unknown option: " << arg << std::endl;
             return false;
@@ -72,6 +80,13 @@ void try_init_gpu(digitrec::DigitRecognizer& recognizer, bool requested) {
     if (!recognizer.init_gpu()) {
         std::cerr << "[GPU] Warning: GPU initialization failed. Continuing on CPU." << std::endl;
     }
+}
+
+void enable_verbose(const Config& config) {
+    if (!config.verbose) return;
+    digitrec::OpLog::enabled = true;
+    auto& gpu = digitrec::GpuBackend::instance();
+    gpu.set_verbose(true);
 }
 
 int cmd_train(const Config& config) {
@@ -106,6 +121,7 @@ int cmd_predict(const Config& config) {
     }
 
     try_init_gpu(recognizer, config.use_gpu);
+    enable_verbose(config);
 
     try {
         auto result = recognizer.recognize(config.input_path);
@@ -140,6 +156,7 @@ int cmd_predict_multi(const Config& config) {
     }
 
     try_init_gpu(recognizer, config.use_gpu);
+    enable_verbose(config);
 
     try {
         auto result = recognizer.recognize_multi_digit(config.input_path);

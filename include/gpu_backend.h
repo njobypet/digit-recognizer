@@ -12,6 +12,34 @@
 
 namespace digitrec {
 
+struct OpLog {
+    static bool enabled;
+
+    static long long now_ms() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    static void mem(const char* tag, const char* op, size_t bytes, const void* ptr = nullptr) {
+        if (!enabled) return;
+        std::cout << "[" << tag << " " << now_ms() << "ms] " << op;
+        if (bytes > 0) std::cout << "  size=" << bytes << " bytes";
+        if (ptr) std::cout << "  ptr=" << ptr;
+        std::cout << std::endl;
+    }
+
+    static void transfer(const char* direction, size_t bytes) {
+        if (!enabled) return;
+        std::cout << "[MEM " << now_ms() << "ms] " << direction
+                  << "  size=" << bytes << " bytes" << std::endl;
+    }
+
+    static void phase(const char* msg) {
+        if (!enabled) return;
+        std::cout << "[LOG " << now_ms() << "ms] " << msg << std::endl;
+    }
+};
+
 #ifdef USE_HIP
 
 struct KernelLog {
@@ -19,14 +47,18 @@ struct KernelLog {
 
     static void log(const char* kernel_name, dim3 grid, dim3 block, size_t shared_mem = 0) {
         if (!enabled) return;
-        auto now = std::chrono::system_clock::now();
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count();
+        auto ms = OpLog::now_ms();
         std::cout << "[GPU " << ms << "ms] Launching kernel: " << kernel_name
                   << "  grid(" << grid.x << "," << grid.y << "," << grid.z << ")"
                   << "  block(" << block.x << "," << block.y << "," << block.z << ")"
                   << (shared_mem > 0 ? "  shared=" + std::to_string(shared_mem) + "B" : "")
                   << std::endl;
+    }
+
+    static void done(const char* kernel_name) {
+        if (!enabled) return;
+        std::cout << "[GPU " << OpLog::now_ms() << "ms] Kernel complete: "
+                  << kernel_name << std::endl;
     }
 };
 
@@ -68,6 +100,7 @@ public:
     void synchronize();
 
     void set_kernel_logging(bool enabled);
+    void set_verbose(bool enabled);
 
 private:
     GpuBackend() = default;
@@ -90,6 +123,7 @@ public:
     bool is_available() const { return false; }
     std::string device_name() const { return "CPU (no GPU)"; }
     void set_kernel_logging(bool) {}
+    void set_verbose(bool v) { OpLog::enabled = v; }
 };
 
 #endif // USE_HIP

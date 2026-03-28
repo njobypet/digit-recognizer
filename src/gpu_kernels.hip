@@ -155,6 +155,7 @@ __global__ void kernel_update_weights(double* __restrict__ weights,
 // ===========================================================================
 
 bool KernelLog::enabled = true;
+bool OpLog::enabled = false;
 
 GpuBackend& GpuBackend::instance() {
     static GpuBackend g;
@@ -199,30 +200,48 @@ void GpuBackend::set_kernel_logging(bool enabled) {
     KernelLog::enabled = enabled;
 }
 
+void GpuBackend::set_verbose(bool enabled) {
+    OpLog::enabled = enabled;
+    KernelLog::enabled = enabled;
+}
+
 double* GpuBackend::alloc(size_t count) {
     double* ptr = nullptr;
-    hipMalloc(&ptr, count * sizeof(double));
+    size_t bytes = count * sizeof(double);
+    hipMalloc(&ptr, bytes);
+    OpLog::mem("GPU", "hipMalloc (GPU memory allocated)", bytes, ptr);
     return ptr;
 }
 
 void GpuBackend::free(double* ptr) {
-    if (ptr) hipFree(ptr);
+    if (ptr) {
+        OpLog::mem("GPU", "hipFree (GPU memory freed)", 0, ptr);
+        hipFree(ptr);
+    }
 }
 
 void GpuBackend::copy_to_device(double* d_dst, const double* h_src, size_t count) {
-    hipMemcpy(d_dst, h_src, count * sizeof(double), hipMemcpyHostToDevice);
+    size_t bytes = count * sizeof(double);
+    OpLog::transfer("Copy HOST -> DEVICE (CPU to GPU)", bytes);
+    hipMemcpy(d_dst, h_src, bytes, hipMemcpyHostToDevice);
 }
 
 void GpuBackend::copy_to_host(double* h_dst, const double* d_src, size_t count) {
-    hipMemcpy(h_dst, d_src, count * sizeof(double), hipMemcpyDeviceToHost);
+    size_t bytes = count * sizeof(double);
+    OpLog::transfer("Copy DEVICE -> HOST (GPU to CPU)", bytes);
+    hipMemcpy(h_dst, d_src, bytes, hipMemcpyDeviceToHost);
 }
 
 void GpuBackend::copy_on_device(double* d_dst, const double* d_src, size_t count) {
-    hipMemcpy(d_dst, d_src, count * sizeof(double), hipMemcpyDeviceToDevice);
+    size_t bytes = count * sizeof(double);
+    OpLog::transfer("Copy DEVICE -> DEVICE (GPU to GPU)", bytes);
+    hipMemcpy(d_dst, d_src, bytes, hipMemcpyDeviceToDevice);
 }
 
 void GpuBackend::synchronize() {
+    OpLog::phase("hipDeviceSynchronize -- waiting for all GPU kernels to finish...");
     hipDeviceSynchronize();
+    OpLog::phase("hipDeviceSynchronize -- complete");
 }
 
 void GpuBackend::matvec_multiply(const double* d_weights, const double* d_input,
@@ -235,6 +254,7 @@ void GpuBackend::matvec_multiply(const double* d_weights, const double* d_input,
     KernelLog::log("kernel_matvec", grid, block);
     hipLaunchKernelGGL(kernel_matvec, grid, block, 0, 0,
                        d_weights, d_input, d_output, d_biases, rows, cols);
+    KernelLog::done("kernel_matvec");
 }
 
 void GpuBackend::relu_forward(double* d_data, int size) {
@@ -244,6 +264,7 @@ void GpuBackend::relu_forward(double* d_data, int size) {
 
     KernelLog::log("kernel_relu", grid, block);
     hipLaunchKernelGGL(kernel_relu, grid, block, 0, 0, d_data, size);
+    KernelLog::done("kernel_relu");
 }
 
 void GpuBackend::relu_derivative_multiply(const double* d_pre_act, const double* d_upstream,
@@ -255,6 +276,7 @@ void GpuBackend::relu_derivative_multiply(const double* d_pre_act, const double*
     KernelLog::log("kernel_relu_deriv_mul", grid, block);
     hipLaunchKernelGGL(kernel_relu_deriv_mul, grid, block, 0, 0,
                        d_pre_act, d_upstream, d_result, size);
+    KernelLog::done("kernel_relu_deriv_mul");
 }
 
 void GpuBackend::softmax_forward(double* d_data, int size) {
@@ -266,6 +288,7 @@ void GpuBackend::softmax_forward(double* d_data, int size) {
 
     KernelLog::log("kernel_softmax", grid, block, shared);
     hipLaunchKernelGGL(kernel_softmax, grid, block, shared, 0, d_data, size);
+    KernelLog::done("kernel_softmax");
 }
 
 void GpuBackend::compute_output_delta(const double* d_output, const double* d_target,
@@ -277,6 +300,7 @@ void GpuBackend::compute_output_delta(const double* d_output, const double* d_ta
     KernelLog::log("kernel_output_delta", grid, block);
     hipLaunchKernelGGL(kernel_output_delta, grid, block, 0, 0,
                        d_output, d_target, d_delta, size);
+    KernelLog::done("kernel_output_delta");
 }
 
 void GpuBackend::backprop_delta(const double* d_weights_next, const double* d_delta_next,
@@ -290,6 +314,7 @@ void GpuBackend::backprop_delta(const double* d_weights_next, const double* d_de
     hipLaunchKernelGGL(kernel_backprop_delta, grid, block, 0, 0,
                        d_weights_next, d_delta_next, d_pre_act, d_delta,
                        current_size, next_size);
+    KernelLog::done("kernel_backprop_delta");
 }
 
 void GpuBackend::update_weights(double* d_weights, double* d_biases,
@@ -304,6 +329,7 @@ void GpuBackend::update_weights(double* d_weights, double* d_biases,
     hipLaunchKernelGGL(kernel_update_weights, grid, block, 0, 0,
                        d_weights, d_biases, d_delta, d_prev_act,
                        rows, cols, learning_rate);
+    KernelLog::done("kernel_update_weights");
 }
 
 } // namespace digitrec

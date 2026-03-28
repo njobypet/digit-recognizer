@@ -31,16 +31,38 @@ bool DigitRecognizer::init_gpu() {
 }
 
 PredictionResult DigitRecognizer::recognize(const std::string& image_path) const {
-    auto input = ImageProcessor::preprocess_file(image_path);
+    OpLog::phase("=== Loading and preprocessing image ===");
+    OpLog::phase(("Image path: " + image_path).c_str());
+
+    OpLog::phase("Loading image from disk...");
+    auto img = ImageProcessor::load_image(image_path);
+    OpLog::phase(("Loaded: " + std::to_string(img.width) + "x" + std::to_string(img.height) +
+                  " pixels, " + std::to_string(img.channels) + " channels").c_str());
+    OpLog::mem("CPU", "Raw image pixel buffer allocated on CPU",
+               img.width * img.height * img.channels);
+
+    OpLog::phase("Preprocessing: grayscale, auto-invert, center, normalize...");
+    auto input = ImageProcessor::preprocess(img);
+    OpLog::mem("CPU", "Preprocessed input vector (28x28 = 784 doubles) on CPU",
+               input.size() * sizeof(double));
+    OpLog::phase("=== Preprocessing complete ===");
+
     return recognize(input);
 }
 
 PredictionResult DigitRecognizer::recognize(const std::vector<double>& preprocessed_input) const {
+    OpLog::phase("=== Running neural network inference ===");
+    OpLog::phase(using_gpu() ? "Compute path: GPU (ROCm/HIP)" : "Compute path: CPU");
+
     PredictionResult result;
     result.probabilities = network_.predict(preprocessed_input);
     auto it = std::max_element(result.probabilities.begin(), result.probabilities.end());
     result.digit = static_cast<int>(it - result.probabilities.begin());
     result.confidence = *it;
+
+    OpLog::phase(("=== Inference complete: digit=" + std::to_string(result.digit) +
+                  " confidence=" + std::to_string(result.confidence * 100.0).substr(0, 5) +
+                  "% ===").c_str());
     return result;
 }
 
