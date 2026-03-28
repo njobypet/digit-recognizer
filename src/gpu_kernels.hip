@@ -2,6 +2,8 @@
 #include "gpu_backend.h"
 #include <cfloat>
 #include <cmath>
+#include <thread>
+#include <random>
 
 namespace digitrec {
 
@@ -157,6 +159,36 @@ __global__ void kernel_update_weights(double* __restrict__ weights,
 bool KernelLog::enabled = false;
 bool OpLog::cpu_enabled = false;
 bool OpLog::gpu_enabled = false;
+bool GpuDelay::enabled = false;
+
+static std::mt19937& delay_rng() {
+    static std::mt19937 rng(static_cast<unsigned>(
+        std::chrono::steady_clock::now().time_since_epoch().count()));
+    return rng;
+}
+
+bool GpuDelay::should_delay() {
+    if (!enabled) return false;
+    std::uniform_int_distribution<int> dist(1, 100);
+    return dist(delay_rng()) <= probability_percent;
+}
+
+int GpuDelay::random_delay_ms() {
+    std::uniform_int_distribution<int> dist(min_delay_ms, max_delay_ms);
+    return dist(delay_rng());
+}
+
+void GpuDelay::apply(const char* kernel_name, std::string& display_name) {
+    if (!should_delay()) {
+        display_name = kernel_name;
+        return;
+    }
+    display_name = std::string("delay_") + kernel_name;
+    int delay = random_delay_ms();
+    std::cout << "[DELAY " << OpLog::now_ms() << "ms] Injecting " << delay
+              << "ms delay before " << display_name << std::endl;
+    std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+}
 
 GpuBackend& GpuBackend::instance() {
     static GpuBackend g;
@@ -250,10 +282,12 @@ void GpuBackend::matvec_multiply(const double* d_weights, const double* d_input,
     int blocks = (rows + threads - 1) / threads;
     dim3 grid(blocks), block(threads);
 
-    KernelLog::log("kernel_matvec", grid, block);
+    std::string name;
+    GpuDelay::apply("kernel_matvec", name);
+    KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_matvec, grid, block, 0, 0,
                        d_weights, d_input, d_output, d_biases, rows, cols);
-    KernelLog::done("kernel_matvec");
+    KernelLog::done(name.c_str());
 }
 
 void GpuBackend::relu_forward(double* d_data, int size) {
@@ -261,9 +295,11 @@ void GpuBackend::relu_forward(double* d_data, int size) {
     int blocks = (size + threads - 1) / threads;
     dim3 grid(blocks), block(threads);
 
-    KernelLog::log("kernel_relu", grid, block);
+    std::string name;
+    GpuDelay::apply("kernel_relu", name);
+    KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_relu, grid, block, 0, 0, d_data, size);
-    KernelLog::done("kernel_relu");
+    KernelLog::done(name.c_str());
 }
 
 void GpuBackend::relu_derivative_multiply(const double* d_pre_act, const double* d_upstream,
@@ -272,10 +308,12 @@ void GpuBackend::relu_derivative_multiply(const double* d_pre_act, const double*
     int blocks = (size + threads - 1) / threads;
     dim3 grid(blocks), block(threads);
 
-    KernelLog::log("kernel_relu_deriv_mul", grid, block);
+    std::string name;
+    GpuDelay::apply("kernel_relu_deriv_mul", name);
+    KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_relu_deriv_mul, grid, block, 0, 0,
                        d_pre_act, d_upstream, d_result, size);
-    KernelLog::done("kernel_relu_deriv_mul");
+    KernelLog::done(name.c_str());
 }
 
 void GpuBackend::softmax_forward(double* d_data, int size) {
@@ -285,9 +323,11 @@ void GpuBackend::softmax_forward(double* d_data, int size) {
     size_t shared = threads * sizeof(double);
     dim3 grid(1), block(threads);
 
-    KernelLog::log("kernel_softmax", grid, block, shared);
+    std::string name;
+    GpuDelay::apply("kernel_softmax", name);
+    KernelLog::log(name.c_str(), grid, block, shared);
     hipLaunchKernelGGL(kernel_softmax, grid, block, shared, 0, d_data, size);
-    KernelLog::done("kernel_softmax");
+    KernelLog::done(name.c_str());
 }
 
 void GpuBackend::compute_output_delta(const double* d_output, const double* d_target,
@@ -296,10 +336,12 @@ void GpuBackend::compute_output_delta(const double* d_output, const double* d_ta
     int blocks = (size + threads - 1) / threads;
     dim3 grid(blocks), block(threads);
 
-    KernelLog::log("kernel_output_delta", grid, block);
+    std::string name;
+    GpuDelay::apply("kernel_output_delta", name);
+    KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_output_delta, grid, block, 0, 0,
                        d_output, d_target, d_delta, size);
-    KernelLog::done("kernel_output_delta");
+    KernelLog::done(name.c_str());
 }
 
 void GpuBackend::backprop_delta(const double* d_weights_next, const double* d_delta_next,
@@ -309,11 +351,13 @@ void GpuBackend::backprop_delta(const double* d_weights_next, const double* d_de
     int blocks = (current_size + threads - 1) / threads;
     dim3 grid(blocks), block(threads);
 
-    KernelLog::log("kernel_backprop_delta", grid, block);
+    std::string name;
+    GpuDelay::apply("kernel_backprop_delta", name);
+    KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_backprop_delta, grid, block, 0, 0,
                        d_weights_next, d_delta_next, d_pre_act, d_delta,
                        current_size, next_size);
-    KernelLog::done("kernel_backprop_delta");
+    KernelLog::done(name.c_str());
 }
 
 void GpuBackend::update_weights(double* d_weights, double* d_biases,
@@ -324,11 +368,13 @@ void GpuBackend::update_weights(double* d_weights, double* d_biases,
     int blocks = (total + threads - 1) / threads;
     dim3 grid(blocks), block(threads);
 
-    KernelLog::log("kernel_update_weights", grid, block);
+    std::string name;
+    GpuDelay::apply("kernel_update_weights", name);
+    KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_update_weights, grid, block, 0, 0,
                        d_weights, d_biases, d_delta, d_prev_act,
                        rows, cols, learning_rate);
-    KernelLog::done("kernel_update_weights");
+    KernelLog::done(name.c_str());
 }
 
 } // namespace digitrec

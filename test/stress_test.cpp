@@ -80,6 +80,7 @@ int main(int argc, char* argv[]) {
     std::string images_dir = "sample_images";
     bool use_gpu = false;
     bool verbose = false;
+    bool gpudelay = false;
     std::string cpulogs;
     std::string gpulogs;
 
@@ -90,6 +91,7 @@ int main(int argc, char* argv[]) {
         else if (arg == "--images" && i + 1 < argc)   images_dir = argv[++i];
         else if (arg == "--gpu")                      use_gpu = true;
         else if (arg == "--verbose")                  verbose = true;
+        else if (arg == "--gpudelay")                 gpudelay = true;
         else if (arg == "--cpulogs" && i + 1 < argc)  cpulogs = argv[++i];
         else if (arg == "--gpulogs" && i + 1 < argc)  gpulogs = argv[++i];
         else if (arg == "--help") {
@@ -98,6 +100,7 @@ int main(int argc, char* argv[]) {
                       << "  --model <path>     Path to trained model file\n"
                       << "  --images <dir>     Path to sample_images directory\n"
                       << "  --gpu              Pass --gpu flag to digit_recognizer\n"
+                      << "  --gpudelay         Pass --gpudelay to digit_recognizer\n"
                       << "  --verbose          Pass --verbose to digit_recognizer\n"
                       << "  --cpulogs on|off   Pass --cpulogs to digit_recognizer\n"
                       << "  --gpulogs on|off   Pass --gpulogs to digit_recognizer\n"
@@ -153,6 +156,7 @@ int main(int argc, char* argv[]) {
         std::string cmd = exe_path + " predict \"" + img_path +
                           "\" --model " + model_path;
         if (use_gpu) cmd += " --gpu";
+        if (gpudelay) cmd += " --gpudelay";
         if (verbose) cmd += " --verbose";
         if (!cpulogs.empty()) cmd += " --cpulogs " + cpulogs;
         if (!gpulogs.empty()) cmd += " --gpulogs " + gpulogs;

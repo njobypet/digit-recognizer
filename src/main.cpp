@@ -22,6 +22,13 @@ namespace fs = std::filesystem;
 #ifndef USE_HIP
 bool digitrec::OpLog::cpu_enabled = false;
 bool digitrec::OpLog::gpu_enabled = false;
+bool digitrec::GpuDelay::enabled = false;
+
+bool digitrec::GpuDelay::should_delay() { return false; }
+int digitrec::GpuDelay::random_delay_ms() { return 0; }
+void digitrec::GpuDelay::apply(const char* kernel_name, std::string& display_name) {
+    display_name = kernel_name;
+}
 #endif
 
 static const char* PID_FILE = ".digit_recognizer.pid";
@@ -57,7 +64,9 @@ void print_usage(const char* program) {
               << "  --gpulogs on|off   Turn GPU logs on or off\n"
               << "  --infinite         Run predict in an infinite loop on random images\n"
               << "                     (pass a directory as <image_file_or_dir>)\n"
-              << "                     Stop with: stop_digit_recognizer or Ctrl+C\n\n"
+              << "                     Stop with: stop_digit_recognizer or Ctrl+C\n"
+              << "  --gpudelay         Inject random 2-10s delays into ~10% of GPU kernels\n"
+              << "                     Delayed kernels are prefixed 'delay_' in logs\n\n"
               << "Examples:\n"
               << "  " << program << " predict digit.png --model m.bin\n"
               << "  " << program << " predict sample_images --model m.bin --infinite --gpu\n"
@@ -74,6 +83,7 @@ struct Config {
     bool use_gpu = false;
     bool verbose = false;
     bool infinite = false;
+    bool gpudelay = false;
     int cpulogs = -1;
     int gpulogs = -1;
 };
@@ -105,6 +115,8 @@ bool parse_args(int argc, char* argv[], Config& config) {
             config.verbose = true;
         } else if (arg == "--infinite") {
             config.infinite = true;
+        } else if (arg == "--gpudelay") {
+            config.gpudelay = true;
         } else if (arg == "--cpulogs" && i + 1 < argc) {
             config.cpulogs = parse_on_off(argv[++i]) ? 1 : 0;
         } else if (arg == "--gpulogs" && i + 1 < argc) {
@@ -133,6 +145,7 @@ void apply_log_flags(const Config& config) {
 
     digitrec::OpLog::cpu_enabled = cpu_on;
     digitrec::OpLog::gpu_enabled = gpu_on;
+    digitrec::GpuDelay::enabled = config.gpudelay;
 
 #ifdef USE_HIP
     digitrec::KernelLog::enabled = gpu_on;
