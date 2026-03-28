@@ -504,19 +504,9 @@ void NeuralNetwork::train_batch(const std::vector<std::vector<double>>& inputs,
     for (int epoch = 0; epoch < epochs; ++epoch) {
         std::shuffle(indices.begin(), indices.end(), rng_);
         double total_loss = 0.0;
-#ifdef USE_HIP
-        bool first_batch = true;
-#endif
 
         for (size_t start = 0; start < n; start += batch_size) {
             size_t end = std::min(start + static_cast<size_t>(batch_size), n);
-
-#ifdef USE_HIP
-            if (use_gpu_ && !OpLog::gpu_enabled) {
-                GpuBackend::instance().set_kernel_logging(first_batch);
-                first_batch = false;
-            }
-#endif
 
             for (size_t i = start; i < end; ++i) {
                 size_t idx = indices[i];
@@ -533,11 +523,6 @@ void NeuralNetwork::train_batch(const std::vector<std::vector<double>>& inputs,
 
 #ifdef USE_HIP
         if (use_gpu_) {
-            if (!OpLog::gpu_enabled) {
-                GpuBackend::instance().set_kernel_logging(true);
-            }
-            // Copy weights to CPU for evaluation/saving. GPU weights
-            // remain valid -- no re-upload needed for the next epoch.
             download_weights_from_gpu();
         }
 #endif

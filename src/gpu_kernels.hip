@@ -154,7 +154,7 @@ __global__ void kernel_update_weights(double* __restrict__ weights,
 // GpuBackend method implementations
 // ===========================================================================
 
-bool KernelLog::enabled = true;
+bool KernelLog::enabled = false;
 bool OpLog::cpu_enabled = false;
 bool OpLog::gpu_enabled = false;
 
