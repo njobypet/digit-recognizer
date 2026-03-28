@@ -89,4 +89,7 @@ if(UNIX)
     target_link_libraries(digit_recognizer PRIVATE pthread m)
 endif()
 
+# ---- Utility: generate sample images from MNIST ----
+add_executable(generate_samples tools/generate_samples.cpp)
+
 install(TARGETS digit_recognizer DESTINATION bin)
