@@ -183,7 +183,7 @@ void GpuDelay::apply(const char* kernel_name, std::string& display_name) {
         display_name = kernel_name;
         return;
     }
-    display_name = std::string("delay_") + kernel_name;
+    display_name = std::string(kernel_name) + "_delay";
     int delay = random_delay_ms();
     std::cout << "[DELAY " << OpLog::now_ms() << "ms] Injecting " << delay
               << "ms delay before " << display_name << std::endl;

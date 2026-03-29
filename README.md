@@ -446,7 +446,7 @@ The `--gpudelay` flag injects random delays (1-100ms) into approximately 10% of 
 - **Timeout/watchdog testing** -- ensures your monitoring detects stalled GPU work
 - **Stress testing** -- creates uneven GPU utilization patterns
 
-When a kernel is selected for delay, its name is prefixed with `delay_` in all log output so it's easy to identify.
+When a kernel is selected for delay, its name is suffixed with `_delay` in all log output so it's easy to identify.
 
 ### Usage
 
@@ -468,9 +468,9 @@ When a kernel is selected for delay, its name is prefixed with `delay_` in all l
 [GPU 12345678ms] Kernel complete: kernel_matvec
 [GPU 12345679ms] Launching kernel: kernel_relu  grid(1,1,1)  block(256,1,1)
 [GPU 12345679ms] Kernel complete: kernel_relu
-[DELAY 12345680ms] Injecting 73ms delay before delay_kernel_matvec
-[GPU 12345753ms] Launching kernel: delay_kernel_matvec  grid(1,1,1)  block(256,1,1)
-[GPU 12345753ms] Kernel complete: delay_kernel_matvec
+[DELAY 12345680ms] Injecting 73ms delay before kernel_matvec_delay
+[GPU 12345753ms] Launching kernel: kernel_matvec_delay  grid(1,1,1)  block(256,1,1)
+[GPU 12345753ms] Kernel complete: kernel_matvec_delay
 [GPU 12345754ms] Launching kernel: kernel_relu  grid(1,1,1)  block(256,1,1)
 [GPU 12345754ms] Kernel complete: kernel_relu
 [GPU 12345755ms] Launching kernel: kernel_softmax  grid(1,1,1)  block(32,1,1)  shared=256B
@@ -483,7 +483,7 @@ When a kernel is selected for delay, its name is prefixed with `delay_` in all l
 |--------|--------|
 | Probability | ~10% of kernel launches are delayed |
 | Delay range | 1ms to 100ms (uniform random) |
-| Naming | Delayed kernels: `delay_kernel_matvec`, `delay_kernel_relu`, etc. |
+| Naming | Delayed kernels: `kernel_matvec_delay`, `kernel_relu_delay`, etc. |
 | Non-delayed | Normal kernel name: `kernel_matvec`, `kernel_relu`, etc. |
 | Scope | Applies to all 6 GPU kernels equally |
 | Log tag | `[DELAY ...]` line printed before the sleep |

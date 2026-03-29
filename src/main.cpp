@@ -66,7 +66,7 @@ void print_usage(const char* program) {
               << "                     (pass a directory as <image_file_or_dir>)\n"
               << "                     Stop with: stop_digit_recognizer or Ctrl+C\n"
               << "  --gpudelay         Inject random 1-100ms delays into ~10% of GPU kernels\n"
-              << "                     Delayed kernels are prefixed 'delay_' in logs\n\n"
+              << "                     Delayed kernels are suffixed '_delay' in logs\n\n"
               << "Examples:\n"
               << "  " << program << " predict digit.png --model m.bin\n"
               << "  " << program << " predict sample_images --model m.bin --infinite --gpu\n"
