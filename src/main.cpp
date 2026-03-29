@@ -65,7 +65,7 @@ void print_usage(const char* program) {
               << "  --infinite         Run predict in an infinite loop on random images\n"
               << "                     (pass a directory as <image_file_or_dir>)\n"
               << "                     Stop with: stop_digit_recognizer or Ctrl+C\n"
-              << "  --gpudelay         Inject random 1-3s delays into ~10% of GPU kernels\n"
+              << "  --gpudelay         Inject random 1-100ms delays into ~10% of GPU kernels\n"
               << "                     Delayed kernels are prefixed 'delay_' in logs\n\n"
               << "Examples:\n"
               << "  " << program << " predict digit.png --model m.bin\n"

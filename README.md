@@ -150,7 +150,7 @@ Options:
   --cpulogs on|off   Turn CPU-side logs on or off
   --gpulogs on|off   Turn GPU-side logs on or off
   --infinite         Run predict in an infinite loop on random images from a directory
-  --gpudelay         Inject random 1-3s delays into ~10% of GPU kernels
+  --gpudelay         Inject random 1-100ms delays into ~10% of GPU kernels
 ```
 
 ### Example: Train a Model
@@ -440,7 +440,7 @@ No platform-specific IPC is used -- works identically on Windows and Linux.
 
 ## GPU Kernel Delay Injection (`--gpudelay`)
 
-The `--gpudelay` flag injects random delays (1-3 seconds) into approximately 10% of GPU kernel launches. This is useful for:
+The `--gpudelay` flag injects random delays (1-100ms) into approximately 10% of GPU kernel launches. This is useful for:
 
 - **Profiling tool testing** -- simulates slow kernels to verify profiler behavior
 - **Timeout/watchdog testing** -- ensures your monitoring detects stalled GPU work
@@ -468,13 +468,13 @@ When a kernel is selected for delay, its name is prefixed with `delay_` in all l
 [GPU 12345678ms] Kernel complete: kernel_matvec
 [GPU 12345679ms] Launching kernel: kernel_relu  grid(1,1,1)  block(256,1,1)
 [GPU 12345679ms] Kernel complete: kernel_relu
-[DELAY 12345680ms] Injecting 2341ms delay before delay_kernel_matvec
-[GPU 12348021ms] Launching kernel: delay_kernel_matvec  grid(1,1,1)  block(256,1,1)
-[GPU 12348021ms] Kernel complete: delay_kernel_matvec
-[GPU 12348022ms] Launching kernel: kernel_relu  grid(1,1,1)  block(256,1,1)
-[GPU 12348022ms] Kernel complete: kernel_relu
-[GPU 12348023ms] Launching kernel: kernel_softmax  grid(1,1,1)  block(32,1,1)  shared=256B
-[GPU 12348023ms] Kernel complete: kernel_softmax
+[DELAY 12345680ms] Injecting 73ms delay before delay_kernel_matvec
+[GPU 12345753ms] Launching kernel: delay_kernel_matvec  grid(1,1,1)  block(256,1,1)
+[GPU 12345753ms] Kernel complete: delay_kernel_matvec
+[GPU 12345754ms] Launching kernel: kernel_relu  grid(1,1,1)  block(256,1,1)
+[GPU 12345754ms] Kernel complete: kernel_relu
+[GPU 12345755ms] Launching kernel: kernel_softmax  grid(1,1,1)  block(32,1,1)  shared=256B
+[GPU 12345755ms] Kernel complete: kernel_softmax
 ```
 
 ### Behavior
@@ -482,7 +482,7 @@ When a kernel is selected for delay, its name is prefixed with `delay_` in all l
 | Aspect | Detail |
 |--------|--------|
 | Probability | ~10% of kernel launches are delayed |
-| Delay range | 1,000ms to 3,000ms (uniform random) |
+| Delay range | 1ms to 100ms (uniform random) |
 | Naming | Delayed kernels: `delay_kernel_matvec`, `delay_kernel_relu`, etc. |
 | Non-delayed | Normal kernel name: `kernel_matvec`, `kernel_relu`, etc. |
 | Scope | Applies to all 6 GPU kernels equally |
