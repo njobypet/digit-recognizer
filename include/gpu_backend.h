@@ -61,8 +61,8 @@ struct OpLog {
 struct GpuDelay {
     static bool enabled;
     static constexpr int probability_percent = 10;
-    static constexpr int min_delay_ms = 2000;
-    static constexpr int max_delay_ms = 10000;
+    static constexpr int min_delay_ms = 1000;
+    static constexpr int max_delay_ms = 3000;
 
     static bool should_delay();
     static int random_delay_ms();
