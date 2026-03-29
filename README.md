@@ -520,10 +520,12 @@ When a kernel is selected for a memory spike, its name is suffixed with `_mem` i
 [GPU 12345678ms] Kernel complete: kernel_matvec
 [GPUMEM 12345679ms] Allocated 47 MB (49283072 bytes) for kernel_relu_mem  ptr=0x7f...
 [GPUMEM 12345680ms] Filled with image data (tiled 2048 bytes across 49283072 bytes) for kernel_relu_mem
-[GPUMEM 12345681ms] Launching kernel_bitflip (49283072 bytes) for kernel_relu_mem
-[GPUMEM 12345682ms] kernel_bitflip complete for kernel_relu_mem
-[GPUMEM 12345683ms] Launching kernel_memzero (49283072 bytes) for kernel_relu_mem
-[GPUMEM 12345684ms] kernel_memzero complete for kernel_relu_mem
+[GPUMEM 12345681ms] hipMemcpy GPU -> CPU (49283072 bytes) for kernel_relu_mem
+[GPUMEM 12345682ms] Flipping all bits on CPU (49283072 bytes) for kernel_relu_mem
+[GPUMEM 12345683ms] hipMemcpy CPU -> GPU (49283072 bytes) for kernel_relu_mem
+[GPUMEM 12345684ms] Bitflip round-trip complete for kernel_relu_mem
+[GPUMEM 12345685ms] Launching kernel_memzero (49283072 bytes) for kernel_relu_mem
+[GPUMEM 12345686ms] kernel_memzero complete for kernel_relu_mem
 [GPUMEM 12345685ms] Freed 47 MB for kernel_relu_mem
 [GPU 12345685ms] Launching kernel: kernel_relu_mem  grid(1,1,1)  block(256,1,1)
 [GPU 12345685ms] Kernel complete: kernel_relu_mem
@@ -536,12 +538,13 @@ When a kernel is selected for a memory spike, its name is suffixed with `_mem` i
 For each affected kernel, the spike follows these steps:
 
 1. **hipMalloc** -- allocate 1-100 MB of GPU memory
-2. **Fill with image data** -- copy the kernel's input activation data into the buffer, tiled repeatedly to fill the entire allocation
-3. **kernel_bitflip** -- launch a GPU kernel that flips every bit (`~data[i]`) across the full buffer
-4. **hipDeviceSynchronize** -- wait for bitflip to complete
-5. **kernel_memzero** -- launch a GPU kernel that zeros every byte (`data[i] = 0`)
-6. **hipDeviceSynchronize** -- wait for zero to complete
-7. **hipFree** -- free the allocation
+2. **Fill with image data** -- tile the kernel's input activation data across the buffer (device-to-device hipMemcpy)
+3. **hipMemcpy GPU -> CPU** -- copy the full GPU buffer to a CPU allocation
+4. **CPU bitflip** -- flip every bit (`~data[i]`) on CPU
+5. **hipMemcpy CPU -> GPU** -- copy the flipped data back to the GPU buffer
+6. **kernel_memzero** -- launch a GPU kernel that zeros every byte (`data[i] = 0`)
+7. **hipDeviceSynchronize** -- wait for zero to complete
+8. **hipFree** -- free the GPU allocation
 
 ### Behavior
 
@@ -551,7 +554,7 @@ For each affected kernel, the spike follows these steps:
 | Allocation size | 1 MB to 100 MB (uniform random) |
 | Naming | Affected kernels: `kernel_matvec_mem`, `kernel_relu_mem`, etc. |
 | Data fill | Tiled copy of the kernel's input activation/image data |
-| Bitflip | GPU kernel flips every bit in the allocation |
+| Bitflip | GPU -> CPU copy, CPU flips every bit, CPU -> GPU copy back |
 | Zero | GPU kernel resets every byte to 0 before free |
 | HIP optimizations | Disabled (`-O0 -fno-fast-math`) so bitflip/zero execute faithfully |
 | Combinable | Can be used together with `--gpudelay` (a kernel can get both `_delay` and `_mem` suffixes) |

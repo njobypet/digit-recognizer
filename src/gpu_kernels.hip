@@ -252,19 +252,30 @@ void GpuMemSpike::apply(const char* kernel_name, std::string& display_name,
                   << " for " << display_name << std::endl;
     }
 
-    // Step 2: Flip every bit (launch kernel_bitflip with no HIP optimizations)
+    // Step 2: Copy GPU memory to CPU, flip every bit on CPU, copy back to GPU
     if (ptr) {
-        int threads = 256;
-        size_t blocks = (bytes + threads - 1) / threads;
-        std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] Launching kernel_bitflip ("
+        unsigned char* h_buf = new unsigned char[bytes];
+
+        std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] hipMemcpy GPU -> CPU ("
                   << bytes << " bytes) for " << display_name << std::endl;
-        hipLaunchKernelGGL(kernel_bitflip, dim3(blocks), dim3(threads), 0, 0, ptr, bytes);
-        (void)hipDeviceSynchronize();
-        std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] kernel_bitflip complete"
+        (void)hipMemcpy(h_buf, ptr, bytes, hipMemcpyDeviceToHost);
+
+        std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] Flipping all bits on CPU ("
+                  << bytes << " bytes) for " << display_name << std::endl;
+        for (size_t i = 0; i < bytes; ++i) {
+            h_buf[i] = ~h_buf[i];
+        }
+
+        std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] hipMemcpy CPU -> GPU ("
+                  << bytes << " bytes) for " << display_name << std::endl;
+        (void)hipMemcpy(ptr, h_buf, bytes, hipMemcpyHostToDevice);
+
+        delete[] h_buf;
+        std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] Bitflip round-trip complete"
                   << " for " << display_name << std::endl;
     }
 
-    // Step 3: Zero out the memory (launch kernel_memzero)
+    // Step 3: Zero out the GPU memory via kernel
     if (ptr) {
         int threads = 256;
         size_t blocks = (bytes + threads - 1) / threads;
