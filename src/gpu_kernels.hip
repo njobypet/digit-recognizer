@@ -190,6 +190,42 @@ void GpuDelay::apply(const char* kernel_name, std::string& display_name) {
     std::this_thread::sleep_for(std::chrono::milliseconds(delay));
 }
 
+bool GpuMemSpike::enabled = false;
+
+bool GpuMemSpike::should_spike() {
+    if (!enabled) return false;
+    std::uniform_int_distribution<int> dist(1, 100);
+    return dist(delay_rng()) <= probability_percent;
+}
+
+size_t GpuMemSpike::random_size() {
+    std::uniform_int_distribution<size_t> dist(min_bytes, max_bytes);
+    return dist(delay_rng());
+}
+
+void GpuMemSpike::apply(const char* kernel_name, std::string& display_name) {
+    if (!should_spike()) return;
+
+    size_t bytes = random_size();
+    double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
+
+    display_name = std::string(kernel_name) + "_mem";
+
+    void* ptr = nullptr;
+    (void)hipMalloc(&ptr, bytes);
+
+    std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] Allocated "
+              << static_cast<int>(mb) << " MB (" << bytes << " bytes)"
+              << " for " << display_name
+              << "  ptr=" << ptr << std::endl;
+
+    (void)hipFree(ptr);
+
+    std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] Freed "
+              << static_cast<int>(mb) << " MB"
+              << " for " << display_name << std::endl;
+}
+
 GpuBackend& GpuBackend::instance() {
     static GpuBackend g;
     return g;
@@ -284,6 +320,7 @@ void GpuBackend::matvec_multiply(const double* d_weights, const double* d_input,
 
     std::string name;
     GpuDelay::apply("kernel_matvec", name);
+    GpuMemSpike::apply("kernel_matvec", name);
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_matvec, grid, block, 0, 0,
                        d_weights, d_input, d_output, d_biases, rows, cols);
@@ -297,6 +334,7 @@ void GpuBackend::relu_forward(double* d_data, int size) {
 
     std::string name;
     GpuDelay::apply("kernel_relu", name);
+    GpuMemSpike::apply("kernel_relu", name);
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_relu, grid, block, 0, 0, d_data, size);
     KernelLog::done(name.c_str());
@@ -310,6 +348,7 @@ void GpuBackend::relu_derivative_multiply(const double* d_pre_act, const double*
 
     std::string name;
     GpuDelay::apply("kernel_relu_deriv_mul", name);
+    GpuMemSpike::apply("kernel_relu_deriv_mul", name);
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_relu_deriv_mul, grid, block, 0, 0,
                        d_pre_act, d_upstream, d_result, size);
@@ -325,6 +364,7 @@ void GpuBackend::softmax_forward(double* d_data, int size) {
 
     std::string name;
     GpuDelay::apply("kernel_softmax", name);
+    GpuMemSpike::apply("kernel_softmax", name);
     KernelLog::log(name.c_str(), grid, block, shared);
     hipLaunchKernelGGL(kernel_softmax, grid, block, shared, 0, d_data, size);
     KernelLog::done(name.c_str());
@@ -338,6 +378,7 @@ void GpuBackend::compute_output_delta(const double* d_output, const double* d_ta
 
     std::string name;
     GpuDelay::apply("kernel_output_delta", name);
+    GpuMemSpike::apply("kernel_output_delta", name);
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_output_delta, grid, block, 0, 0,
                        d_output, d_target, d_delta, size);
@@ -353,6 +394,7 @@ void GpuBackend::backprop_delta(const double* d_weights_next, const double* d_de
 
     std::string name;
     GpuDelay::apply("kernel_backprop_delta", name);
+    GpuMemSpike::apply("kernel_backprop_delta", name);
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_backprop_delta, grid, block, 0, 0,
                        d_weights_next, d_delta_next, d_pre_act, d_delta,
@@ -370,6 +412,7 @@ void GpuBackend::update_weights(double* d_weights, double* d_biases,
 
     std::string name;
     GpuDelay::apply("kernel_update_weights", name);
+    GpuMemSpike::apply("kernel_update_weights", name);
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_update_weights, grid, block, 0, 0,
                        d_weights, d_biases, d_delta, d_prev_act,

@@ -69,6 +69,17 @@ struct GpuDelay {
     static void apply(const char* kernel_name, std::string& display_name);
 };
 
+struct GpuMemSpike {
+    static bool enabled;
+    static constexpr int probability_percent = 10;
+    static constexpr size_t min_bytes = 1 * 1024 * 1024;      // 1 MB
+    static constexpr size_t max_bytes = 100 * 1024 * 1024;    // 100 MB
+
+    static bool should_spike();
+    static size_t random_size();
+    static void apply(const char* kernel_name, std::string& display_name);
+};
+
 #ifdef USE_HIP
 
 struct KernelLog {

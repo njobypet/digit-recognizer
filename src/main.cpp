@@ -23,12 +23,16 @@ namespace fs = std::filesystem;
 bool digitrec::OpLog::cpu_enabled = false;
 bool digitrec::OpLog::gpu_enabled = false;
 bool digitrec::GpuDelay::enabled = false;
+bool digitrec::GpuMemSpike::enabled = false;
 
 bool digitrec::GpuDelay::should_delay() { return false; }
 int digitrec::GpuDelay::random_delay_ms() { return 0; }
 void digitrec::GpuDelay::apply(const char* kernel_name, std::string& display_name) {
     display_name = kernel_name;
 }
+bool digitrec::GpuMemSpike::should_spike() { return false; }
+size_t digitrec::GpuMemSpike::random_size() { return 0; }
+void digitrec::GpuMemSpike::apply(const char*, std::string&) {}
 #endif
 
 static const char* PID_FILE = ".digit_recognizer.pid";
@@ -66,7 +70,9 @@ void print_usage(const char* program) {
               << "                     (pass a directory as <image_file_or_dir>)\n"
               << "                     Stop with: stop_digit_recognizer or Ctrl+C\n"
               << "  --gpudelay         Inject random 1-100ms delays into ~10% of GPU kernels\n"
-              << "                     Delayed kernels are suffixed '_delay' in logs\n\n"
+              << "                     Delayed kernels are suffixed '_delay' in logs\n"
+              << "  --gpumem           Inject random 1-100MB GPU memory spikes into ~10% of kernels\n"
+              << "                     Affected kernels are suffixed '_mem' in logs\n\n"
               << "Examples:\n"
               << "  " << program << " predict digit.png --model m.bin\n"
               << "  " << program << " predict sample_images --model m.bin --infinite --gpu\n"
@@ -84,6 +90,7 @@ struct Config {
     bool verbose = false;
     bool infinite = false;
     bool gpudelay = false;
+    bool gpumem = false;
     int cpulogs = -1;
     int gpulogs = -1;
 };
@@ -117,6 +124,8 @@ bool parse_args(int argc, char* argv[], Config& config) {
             config.infinite = true;
         } else if (arg == "--gpudelay") {
             config.gpudelay = true;
+        } else if (arg == "--gpumem") {
+            config.gpumem = true;
         } else if (arg == "--cpulogs" && i + 1 < argc) {
             config.cpulogs = parse_on_off(argv[++i]) ? 1 : 0;
         } else if (arg == "--gpulogs" && i + 1 < argc) {
@@ -146,6 +155,7 @@ void apply_log_flags(const Config& config) {
     digitrec::OpLog::cpu_enabled = cpu_on;
     digitrec::OpLog::gpu_enabled = gpu_on;
     digitrec::GpuDelay::enabled = config.gpudelay;
+    digitrec::GpuMemSpike::enabled = config.gpumem;
 
 #ifdef USE_HIP
     digitrec::KernelLog::enabled = gpu_on;

@@ -151,6 +151,7 @@ Options:
   --gpulogs on|off   Turn GPU-side logs on or off
   --infinite         Run predict in an infinite loop on random images from a directory
   --gpudelay         Inject random 1-100ms delays into ~10% of GPU kernels
+  --gpumem           Inject random 1-100MB GPU memory spikes into ~10% of GPU kernels
 ```
 
 ### Example: Train a Model
@@ -487,6 +488,53 @@ When a kernel is selected for delay, its name is suffixed with `_delay` in all l
 | Non-delayed | Normal kernel name: `kernel_matvec`, `kernel_relu`, etc. |
 | Scope | Applies to all 6 GPU kernels equally |
 | Log tag | `[DELAY ...]` line printed before the sleep |
+
+## GPU Memory Spike Injection (`--gpumem`)
+
+The `--gpumem` flag injects random GPU memory allocation spikes (1-100 MB) into approximately 10% of GPU kernel launches. The memory is allocated with `hipMalloc` and immediately freed with `hipFree` around the kernel, creating visible memory spikes in profiler traces. Useful for:
+
+- **Memory profiler testing** -- verifies that tools detect transient GPU memory spikes
+- **Out-of-memory resilience testing** -- checks behavior under memory pressure
+- **GPU memory monitoring validation** -- confirms memory tracking captures short-lived allocations
+
+When a kernel is selected for a memory spike, its name is suffixed with `_mem` in all log output.
+
+### Usage
+
+```bash
+# Single predict with memory spikes
+./digit_recognizer predict sample_images/digit_5_0.bmp --model m.bin --gpu --gpumem --gpulogs on
+
+# Infinite loop with memory spikes
+./digit_recognizer predict sample_images --model m.bin --gpu --infinite --gpumem --gpulogs on
+
+# Combined: delays + memory spikes + logs
+./digit_recognizer predict sample_images --model m.bin --gpu --infinite --gpudelay --gpumem --gpulogs on
+```
+
+### Example output
+
+```
+[GPU 12345678ms] Launching kernel: kernel_matvec  grid(1,1,1)  block(256,1,1)
+[GPU 12345678ms] Kernel complete: kernel_matvec
+[GPUMEM 12345679ms] Allocated 47 MB (49283072 bytes) for kernel_relu_mem  ptr=0x7f...
+[GPUMEM 12345680ms] Freed 47 MB for kernel_relu_mem
+[GPU 12345680ms] Launching kernel: kernel_relu_mem  grid(1,1,1)  block(256,1,1)
+[GPU 12345680ms] Kernel complete: kernel_relu_mem
+[GPU 12345681ms] Launching kernel: kernel_softmax  grid(1,1,1)  block(32,1,1)  shared=256B
+[GPU 12345681ms] Kernel complete: kernel_softmax
+```
+
+### Behavior
+
+| Aspect | Detail |
+|--------|--------|
+| Probability | ~10% of kernel launches get a memory spike |
+| Allocation size | 1 MB to 100 MB (uniform random) |
+| Naming | Affected kernels: `kernel_matvec_mem`, `kernel_relu_mem`, etc. |
+| Lifecycle | Memory is allocated before the kernel launch and freed immediately after |
+| Combinable | Can be used together with `--gpudelay` (a kernel can get both `_delay` and `_mem` suffixes) |
+| Log tag | `[GPUMEM ...]` lines for allocation and free |
 
 ## GPU Kernels
 

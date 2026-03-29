@@ -81,6 +81,7 @@ int main(int argc, char* argv[]) {
     bool use_gpu = false;
     bool verbose = false;
     bool gpudelay = false;
+    bool gpumem = false;
     std::string cpulogs;
     std::string gpulogs;
 
@@ -92,6 +93,7 @@ int main(int argc, char* argv[]) {
         else if (arg == "--gpu")                      use_gpu = true;
         else if (arg == "--verbose")                  verbose = true;
         else if (arg == "--gpudelay")                 gpudelay = true;
+        else if (arg == "--gpumem")                   gpumem = true;
         else if (arg == "--cpulogs" && i + 1 < argc)  cpulogs = argv[++i];
         else if (arg == "--gpulogs" && i + 1 < argc)  gpulogs = argv[++i];
         else if (arg == "--help") {
@@ -101,6 +103,7 @@ int main(int argc, char* argv[]) {
                       << "  --images <dir>     Path to sample_images directory\n"
                       << "  --gpu              Pass --gpu flag to digit_recognizer\n"
                       << "  --gpudelay         Pass --gpudelay to digit_recognizer\n"
+                      << "  --gpumem           Pass --gpumem to digit_recognizer\n"
                       << "  --verbose          Pass --verbose to digit_recognizer\n"
                       << "  --cpulogs on|off   Pass --cpulogs to digit_recognizer\n"
                       << "  --gpulogs on|off   Pass --gpulogs to digit_recognizer\n"
@@ -157,6 +160,7 @@ int main(int argc, char* argv[]) {
                           "\" --model " + model_path;
         if (use_gpu) cmd += " --gpu";
         if (gpudelay) cmd += " --gpudelay";
+        if (gpumem) cmd += " --gpumem";
         if (verbose) cmd += " --verbose";
         if (!cpulogs.empty()) cmd += " --cpulogs " + cpulogs;
         if (!gpulogs.empty()) cmd += " --gpulogs " + gpulogs;
