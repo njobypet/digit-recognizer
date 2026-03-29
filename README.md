@@ -491,11 +491,12 @@ When a kernel is selected for delay, its name is suffixed with `_delay` in all l
 
 ## GPU Memory Spike Injection (`--gpumem`)
 
-The `--gpumem` flag injects random GPU memory allocation spikes (1-100 MB) into approximately 10% of GPU kernel launches. The memory is allocated with `hipMalloc` and immediately freed with `hipFree` around the kernel, creating visible memory spikes in profiler traces. Useful for:
+The `--gpumem` flag injects random GPU memory allocation spikes (1-100 MB) into approximately 10% of GPU kernel launches. Each spike performs a full lifecycle: allocate, fill with image data, flip every bit, zero out, and free. All HIP compiler optimizations are disabled (`-O0 -fno-fast-math`) to ensure the bitflip and zero kernels execute faithfully. Useful for:
 
 - **Memory profiler testing** -- verifies that tools detect transient GPU memory spikes
 - **Out-of-memory resilience testing** -- checks behavior under memory pressure
 - **GPU memory monitoring validation** -- confirms memory tracking captures short-lived allocations
+- **Compute stress testing** -- bitflip and zero kernels exercise GPU ALUs on large buffers
 
 When a kernel is selected for a memory spike, its name is suffixed with `_mem` in all log output.
 
@@ -518,12 +519,29 @@ When a kernel is selected for a memory spike, its name is suffixed with `_mem` i
 [GPU 12345678ms] Launching kernel: kernel_matvec  grid(1,1,1)  block(256,1,1)
 [GPU 12345678ms] Kernel complete: kernel_matvec
 [GPUMEM 12345679ms] Allocated 47 MB (49283072 bytes) for kernel_relu_mem  ptr=0x7f...
-[GPUMEM 12345680ms] Freed 47 MB for kernel_relu_mem
-[GPU 12345680ms] Launching kernel: kernel_relu_mem  grid(1,1,1)  block(256,1,1)
-[GPU 12345680ms] Kernel complete: kernel_relu_mem
-[GPU 12345681ms] Launching kernel: kernel_softmax  grid(1,1,1)  block(32,1,1)  shared=256B
-[GPU 12345681ms] Kernel complete: kernel_softmax
+[GPUMEM 12345680ms] Filled with image data (tiled 2048 bytes across 49283072 bytes) for kernel_relu_mem
+[GPUMEM 12345681ms] Launching kernel_bitflip (49283072 bytes) for kernel_relu_mem
+[GPUMEM 12345682ms] kernel_bitflip complete for kernel_relu_mem
+[GPUMEM 12345683ms] Launching kernel_memzero (49283072 bytes) for kernel_relu_mem
+[GPUMEM 12345684ms] kernel_memzero complete for kernel_relu_mem
+[GPUMEM 12345685ms] Freed 47 MB for kernel_relu_mem
+[GPU 12345685ms] Launching kernel: kernel_relu_mem  grid(1,1,1)  block(256,1,1)
+[GPU 12345685ms] Kernel complete: kernel_relu_mem
+[GPU 12345686ms] Launching kernel: kernel_softmax  grid(1,1,1)  block(32,1,1)  shared=256B
+[GPU 12345686ms] Kernel complete: kernel_softmax
 ```
+
+### Memory spike lifecycle
+
+For each affected kernel, the spike follows these steps:
+
+1. **hipMalloc** -- allocate 1-100 MB of GPU memory
+2. **Fill with image data** -- copy the kernel's input activation data into the buffer, tiled repeatedly to fill the entire allocation
+3. **kernel_bitflip** -- launch a GPU kernel that flips every bit (`~data[i]`) across the full buffer
+4. **hipDeviceSynchronize** -- wait for bitflip to complete
+5. **kernel_memzero** -- launch a GPU kernel that zeros every byte (`data[i] = 0`)
+6. **hipDeviceSynchronize** -- wait for zero to complete
+7. **hipFree** -- free the allocation
 
 ### Behavior
 
@@ -532,9 +550,12 @@ When a kernel is selected for a memory spike, its name is suffixed with `_mem` i
 | Probability | ~10% of kernel launches get a memory spike |
 | Allocation size | 1 MB to 100 MB (uniform random) |
 | Naming | Affected kernels: `kernel_matvec_mem`, `kernel_relu_mem`, etc. |
-| Lifecycle | Memory is allocated before the kernel launch and freed immediately after |
+| Data fill | Tiled copy of the kernel's input activation/image data |
+| Bitflip | GPU kernel flips every bit in the allocation |
+| Zero | GPU kernel resets every byte to 0 before free |
+| HIP optimizations | Disabled (`-O0 -fno-fast-math`) so bitflip/zero execute faithfully |
 | Combinable | Can be used together with `--gpudelay` (a kernel can get both `_delay` and `_mem` suffixes) |
-| Log tag | `[GPUMEM ...]` lines for allocation and free |
+| Log tag | `[GPUMEM ...]` lines for each step of the lifecycle |
 
 ## GPU Kernels
 

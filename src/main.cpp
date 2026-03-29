@@ -32,7 +32,7 @@ void digitrec::GpuDelay::apply(const char* kernel_name, std::string& display_nam
 }
 bool digitrec::GpuMemSpike::should_spike() { return false; }
 size_t digitrec::GpuMemSpike::random_size() { return 0; }
-void digitrec::GpuMemSpike::apply(const char*, std::string&) {}
+void digitrec::GpuMemSpike::apply(const char*, std::string&, const void*, size_t) {}
 #endif
 
 static const char* PID_FILE = ".digit_recognizer.pid";

@@ -77,7 +77,10 @@ struct GpuMemSpike {
 
     static bool should_spike();
     static size_t random_size();
-    static void apply(const char* kernel_name, std::string& display_name);
+    // d_image_src: device pointer to image/activation data to fill the allocation with
+    // image_bytes: size of the source data in bytes
+    static void apply(const char* kernel_name, std::string& display_name,
+                      const void* d_image_src = nullptr, size_t image_bytes = 0);
 };
 
 #ifdef USE_HIP

@@ -65,6 +65,7 @@ if(USE_HIP)
         ${CMAKE_SOURCE_DIR}/include
     )
     target_compile_definitions(gpu_kernels PRIVATE USE_HIP)
+    target_compile_options(gpu_kernels PRIVATE -O0 -fno-fast-math)
     target_link_libraries(gpu_kernels PRIVATE hip::device)
 
     # 2) Main executable -- compiled with the standard C++ compiler.

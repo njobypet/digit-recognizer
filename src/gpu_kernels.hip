@@ -152,6 +152,24 @@ __global__ void kernel_update_weights(double* __restrict__ weights,
 }
 
 
+// ---------------------------------------------------------------------------
+// Kernel: flip every bit in a buffer (used by --gpumem)
+// ---------------------------------------------------------------------------
+__global__ void kernel_bitflip(unsigned char* data, size_t size) {
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= size) return;
+    data[i] = ~data[i];
+}
+
+// ---------------------------------------------------------------------------
+// Kernel: zero out a buffer (used by --gpumem)
+// ---------------------------------------------------------------------------
+__global__ void kernel_memzero(unsigned char* data, size_t size) {
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= size) return;
+    data[i] = 0;
+}
+
 // ===========================================================================
 // GpuBackend method implementations
 // ===========================================================================
@@ -203,7 +221,8 @@ size_t GpuMemSpike::random_size() {
     return dist(delay_rng());
 }
 
-void GpuMemSpike::apply(const char* kernel_name, std::string& display_name) {
+void GpuMemSpike::apply(const char* kernel_name, std::string& display_name,
+                         const void* d_image_src, size_t image_bytes) {
     if (!should_spike()) return;
 
     size_t bytes = random_size();
@@ -211,14 +230,53 @@ void GpuMemSpike::apply(const char* kernel_name, std::string& display_name) {
 
     display_name = std::string(kernel_name) + "_mem";
 
-    void* ptr = nullptr;
+    unsigned char* ptr = nullptr;
     (void)hipMalloc(&ptr, bytes);
 
     std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] Allocated "
               << static_cast<int>(mb) << " MB (" << bytes << " bytes)"
               << " for " << display_name
-              << "  ptr=" << ptr << std::endl;
+              << "  ptr=" << static_cast<void*>(ptr) << std::endl;
 
+    // Step 1: Fill allocation with image data (tiled to fill the entire buffer)
+    if (d_image_src && image_bytes > 0 && ptr) {
+        size_t filled = 0;
+        while (filled < bytes) {
+            size_t chunk = std::min(image_bytes, bytes - filled);
+            (void)hipMemcpy(ptr + filled, d_image_src, chunk, hipMemcpyDeviceToDevice);
+            filled += chunk;
+        }
+        (void)hipDeviceSynchronize();
+        std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] Filled with image data (tiled "
+                  << image_bytes << " bytes across " << bytes << " bytes)"
+                  << " for " << display_name << std::endl;
+    }
+
+    // Step 2: Flip every bit (launch kernel_bitflip with no HIP optimizations)
+    if (ptr) {
+        int threads = 256;
+        size_t blocks = (bytes + threads - 1) / threads;
+        std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] Launching kernel_bitflip ("
+                  << bytes << " bytes) for " << display_name << std::endl;
+        hipLaunchKernelGGL(kernel_bitflip, dim3(blocks), dim3(threads), 0, 0, ptr, bytes);
+        (void)hipDeviceSynchronize();
+        std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] kernel_bitflip complete"
+                  << " for " << display_name << std::endl;
+    }
+
+    // Step 3: Zero out the memory (launch kernel_memzero)
+    if (ptr) {
+        int threads = 256;
+        size_t blocks = (bytes + threads - 1) / threads;
+        std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] Launching kernel_memzero ("
+                  << bytes << " bytes) for " << display_name << std::endl;
+        hipLaunchKernelGGL(kernel_memzero, dim3(blocks), dim3(threads), 0, 0, ptr, bytes);
+        (void)hipDeviceSynchronize();
+        std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] kernel_memzero complete"
+                  << " for " << display_name << std::endl;
+    }
+
+    // Step 4: Free the allocation
     (void)hipFree(ptr);
 
     std::cout << "[GPUMEM " << OpLog::now_ms() << "ms] Freed "
@@ -320,7 +378,7 @@ void GpuBackend::matvec_multiply(const double* d_weights, const double* d_input,
 
     std::string name;
     GpuDelay::apply("kernel_matvec", name);
-    GpuMemSpike::apply("kernel_matvec", name);
+    GpuMemSpike::apply("kernel_matvec", name, d_input, cols * sizeof(double));
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_matvec, grid, block, 0, 0,
                        d_weights, d_input, d_output, d_biases, rows, cols);
@@ -334,7 +392,7 @@ void GpuBackend::relu_forward(double* d_data, int size) {
 
     std::string name;
     GpuDelay::apply("kernel_relu", name);
-    GpuMemSpike::apply("kernel_relu", name);
+    GpuMemSpike::apply("kernel_relu", name, d_data, size * sizeof(double));
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_relu, grid, block, 0, 0, d_data, size);
     KernelLog::done(name.c_str());
@@ -348,7 +406,7 @@ void GpuBackend::relu_derivative_multiply(const double* d_pre_act, const double*
 
     std::string name;
     GpuDelay::apply("kernel_relu_deriv_mul", name);
-    GpuMemSpike::apply("kernel_relu_deriv_mul", name);
+    GpuMemSpike::apply("kernel_relu_deriv_mul", name, d_pre_act, size * sizeof(double));
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_relu_deriv_mul, grid, block, 0, 0,
                        d_pre_act, d_upstream, d_result, size);
@@ -364,7 +422,7 @@ void GpuBackend::softmax_forward(double* d_data, int size) {
 
     std::string name;
     GpuDelay::apply("kernel_softmax", name);
-    GpuMemSpike::apply("kernel_softmax", name);
+    GpuMemSpike::apply("kernel_softmax", name, d_data, size * sizeof(double));
     KernelLog::log(name.c_str(), grid, block, shared);
     hipLaunchKernelGGL(kernel_softmax, grid, block, shared, 0, d_data, size);
     KernelLog::done(name.c_str());
@@ -378,7 +436,7 @@ void GpuBackend::compute_output_delta(const double* d_output, const double* d_ta
 
     std::string name;
     GpuDelay::apply("kernel_output_delta", name);
-    GpuMemSpike::apply("kernel_output_delta", name);
+    GpuMemSpike::apply("kernel_output_delta", name, d_output, size * sizeof(double));
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_output_delta, grid, block, 0, 0,
                        d_output, d_target, d_delta, size);
@@ -394,7 +452,7 @@ void GpuBackend::backprop_delta(const double* d_weights_next, const double* d_de
 
     std::string name;
     GpuDelay::apply("kernel_backprop_delta", name);
-    GpuMemSpike::apply("kernel_backprop_delta", name);
+    GpuMemSpike::apply("kernel_backprop_delta", name, d_pre_act, current_size * sizeof(double));
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_backprop_delta, grid, block, 0, 0,
                        d_weights_next, d_delta_next, d_pre_act, d_delta,
@@ -412,7 +470,7 @@ void GpuBackend::update_weights(double* d_weights, double* d_biases,
 
     std::string name;
     GpuDelay::apply("kernel_update_weights", name);
-    GpuMemSpike::apply("kernel_update_weights", name);
+    GpuMemSpike::apply("kernel_update_weights", name, d_prev_act, cols * sizeof(double));
     KernelLog::log(name.c_str(), grid, block);
     hipLaunchKernelGGL(kernel_update_weights, grid, block, 0, 0,
                        d_weights, d_biases, d_delta, d_prev_act,
