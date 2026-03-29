@@ -72,6 +72,7 @@ void print_usage(const char* program) {
               << "  --gpudelay         Inject random 1-100ms delays into ~10% of GPU kernels\n"
               << "                     Delayed kernels are suffixed '_delay' in logs\n"
               << "  --gpumem           Inject random 1-100MB GPU memory spikes into ~10% of kernels\n"
+              << "                     Memory is copied to CPU for bitflip, then back to GPU\n"
               << "                     Affected kernels are suffixed '_mem' in logs\n\n"
               << "Examples:\n"
               << "  " << program << " predict digit.png --model m.bin\n"

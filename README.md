@@ -152,6 +152,7 @@ Options:
   --infinite         Run predict in an infinite loop on random images from a directory
   --gpudelay         Inject random 1-100ms delays into ~10% of GPU kernels
   --gpumem           Inject random 1-100MB GPU memory spikes into ~10% of GPU kernels
+                     (bitflip performed on CPU via GPU->CPU->GPU round-trip)
 ```
 
 ### Example: Train a Model
@@ -491,7 +492,7 @@ When a kernel is selected for delay, its name is suffixed with `_delay` in all l
 
 ## GPU Memory Spike Injection (`--gpumem`)
 
-The `--gpumem` flag injects random GPU memory allocation spikes (1-100 MB) into approximately 10% of GPU kernel launches. Each spike performs a full lifecycle: allocate, fill with image data, flip every bit, zero out, and free. All HIP compiler optimizations are disabled (`-O0 -fno-fast-math`) to ensure the bitflip and zero kernels execute faithfully. Useful for:
+The `--gpumem` flag injects random GPU memory allocation spikes (1-100 MB) into approximately 10% of GPU kernel launches. Each spike performs a full lifecycle: allocate GPU memory, fill with image data, copy to CPU for bitflip, copy back to GPU, zero out on GPU, and free. The bitflip is done on the CPU to exercise the PCIe/xGMI bus with large bidirectional `hipMemcpy` transfers. All HIP compiler optimizations are disabled (`-O0 -fno-fast-math`) to ensure the zero kernel executes faithfully. Useful for:
 
 - **Memory profiler testing** -- verifies that tools detect transient GPU memory spikes
 - **Out-of-memory resilience testing** -- checks behavior under memory pressure
