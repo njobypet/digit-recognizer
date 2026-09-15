@@ -69,6 +69,8 @@ void print_usage(const char* program) {
               << "  --infinite         Run predict in an infinite loop on random images\n"
               << "                     (pass a directory as <image_file_or_dir>)\n"
               << "                     Stop with: stop_digit_recognizer or Ctrl+C\n"
+              << "  --autostop <ms>    Run the predict loop for the given duration, then exit\n"
+              << "                     (milliseconds; directory path; implies a predict loop)\n"
               << "  --gpudelay         Inject random 1-100ms delays into ~10% of GPU kernels\n"
               << "                     Delayed kernels are suffixed '_delay' in logs\n"
               << "  --gpumem           Inject random 1-100MB GPU memory spikes into ~10% of kernels\n"
@@ -77,7 +79,8 @@ void print_usage(const char* program) {
               << "Examples:\n"
               << "  " << program << " predict digit.png --model m.bin\n"
               << "  " << program << " predict sample_images --model m.bin --infinite --gpu\n"
-              << "  " << program << " predict sample_images --model m.bin --infinite --gpulogs on\n";
+              << "  " << program << " predict sample_images --model m.bin --infinite --gpulogs on\n"
+              << "  " << program << " predict sample_images --model m.bin --autostop 200\n";
 }
 
 struct Config {
@@ -90,6 +93,7 @@ struct Config {
     bool use_gpu = false;
     bool verbose = false;
     bool infinite = false;
+    int autostop_ms = 0;
     bool gpudelay = false;
     bool gpumem = false;
     int cpulogs = -1;
@@ -123,6 +127,17 @@ bool parse_args(int argc, char* argv[], Config& config) {
             config.verbose = true;
         } else if (arg == "--infinite") {
             config.infinite = true;
+        } else if (arg == "--autostop" && i + 1 < argc) {
+            try {
+                config.autostop_ms = std::stoi(argv[++i]);
+            } catch (const std::exception&) {
+                std::cerr << "Invalid --autostop value (milliseconds expected)." << std::endl;
+                return false;
+            }
+            if (config.autostop_ms <= 0) {
+                std::cerr << "--autostop requires a positive duration in milliseconds." << std::endl;
+                return false;
+            }
         } else if (arg == "--gpudelay") {
             config.gpudelay = true;
         } else if (arg == "--gpumem") {
@@ -181,6 +196,13 @@ void cleanup_signal_files() {
 
 bool stop_requested() {
     return fs::exists(STOP_FILE);
+}
+
+bool autostop_reached(int autostop_ms, std::chrono::steady_clock::time_point start) {
+    if (autostop_ms <= 0) return false;
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start);
+    return elapsed.count() >= autostop_ms;
 }
 
 std::vector<std::string> collect_images(const std::string& dir) {
@@ -247,7 +269,9 @@ int cmd_predict(const Config& config) {
     try_init_gpu(recognizer, config.use_gpu);
     apply_log_flags(config);
 
-    if (!config.infinite) {
+    const bool loop_mode = config.infinite || config.autostop_ms > 0;
+
+    if (!loop_mode) {
         try {
             auto result = recognizer.recognize(config.input_path);
             print_prediction(result);
@@ -258,7 +282,12 @@ int cmd_predict(const Config& config) {
         return 0;
     }
 
-    // --- Infinite loop mode ---
+    // --- Predict loop (--infinite and/or --autostop) ---
+    if (!fs::is_directory(config.input_path)) {
+        std::cerr << "Error: --infinite and --autostop require an image directory, not a file.\n";
+        return 1;
+    }
+
     auto image_files = collect_images(config.input_path);
     if (image_files.empty()) {
         std::cerr << "No image files found in " << config.input_path << std::endl;
@@ -273,12 +302,20 @@ int cmd_predict(const Config& config) {
     cleanup_signal_files();
     write_pid_file();
 
-    std::cout << "=== Infinite predict mode ===" << std::endl;
+    std::cout << (config.infinite ? "=== Infinite predict mode ===" : "=== Timed predict mode ===")
+              << std::endl;
     std::cout << "Images dir:  " << config.input_path << std::endl;
     std::cout << "Image count: " << image_files.size() << std::endl;
     std::cout << "GPU:         " << (config.use_gpu ? "yes" : "no") << std::endl;
+    if (config.autostop_ms > 0) {
+        std::cout << "Autostop:    " << config.autostop_ms << " ms" << std::endl;
+    }
     std::cout << "PID file:    " << PID_FILE << std::endl;
-    std::cout << "Stop with:   stop_digit_recognizer  or  Ctrl+C\n" << std::endl;
+    std::cout << "Stop with:   stop_digit_recognizer  or  Ctrl+C";
+    if (config.autostop_ms > 0) {
+        std::cout << "  or wait for --autostop";
+    }
+    std::cout << "\n" << std::endl;
 
     std::mt19937 rng(static_cast<unsigned>(
         std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -286,8 +323,14 @@ int cmd_predict(const Config& config) {
 
     int count = 0;
     auto start_time = std::chrono::steady_clock::now();
+    bool stopped_by_autostop = false;
 
     while (g_running && !stop_requested()) {
+        if (autostop_reached(config.autostop_ms, start_time)) {
+            stopped_by_autostop = true;
+            break;
+        }
+
         size_t idx = dist(rng);
         const auto& img_path = image_files[idx];
         count++;
@@ -312,7 +355,9 @@ int cmd_predict(const Config& config) {
     double secs = std::chrono::duration<double>(elapsed).count();
 
     std::cout << "\n=== Stopped ===" << std::endl;
-    if (stop_requested()) {
+    if (stopped_by_autostop) {
+        std::cout << "Reason: --autostop " << config.autostop_ms << " ms reached" << std::endl;
+    } else if (stop_requested()) {
         std::cout << "Reason: stop_digit_recognizer signal received" << std::endl;
     } else {
         std::cout << "Reason: Ctrl+C / SIGINT" << std::endl;

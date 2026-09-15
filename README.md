@@ -137,7 +137,7 @@ digit_recognizer <command> <path> [options]
 Commands:
   train          Train a new model on MNIST dataset
   test           Evaluate model accuracy on MNIST test set
-  predict        Recognize a single digit from an image file (or directory with --infinite)
+  predict        Recognize a single digit from an image file (or directory with --infinite / --autostop)
   predict-multi  Recognize a sequence of digits from an image file
 
 Options:
@@ -150,6 +150,7 @@ Options:
   --cpulogs on|off   Turn CPU-side logs on or off
   --gpulogs on|off   Turn GPU-side logs on or off
   --infinite         Run predict in an infinite loop on random images from a directory
+  --autostop <ms>    Run the predict loop for <ms> milliseconds, then stop automatically
   --gpudelay         Inject random 1-100ms delays into ~10% of GPU kernels
   --gpumem           Inject random 1-100MB GPU memory spikes into ~10% of GPU kernels
                      (bitflip performed on CPU via GPU->CPU->GPU round-trip)
@@ -404,6 +405,33 @@ All standard flags work with `--infinite`:
 ./digit_recognizer predict sample_images --model m.bin --infinite
 ```
 
+### Timed run (`--autostop`)
+
+`--autostop <ms>` runs the same random-image predict loop, then exits after the given duration in milliseconds. Pass a **directory** of images. `--infinite` is not required.
+
+```bash
+$ ./digit_recognizer predict sample_images --model digit_model.bin --autostop 200
+
+=== Timed predict mode ===
+Images dir:  sample_images
+Image count: 104
+GPU:         no
+Autostop:    200 ms
+PID file:    .digit_recognizer.pid
+Stop with:   stop_digit_recognizer  or  Ctrl+C  or wait for --autostop
+
+[     1] digit=1  conf=97.2%  file=digit_1_5.bmp
+...
+
+=== Stopped ===
+Reason: --autostop 200 ms reached
+Total predictions: 42
+Elapsed: 0.2s
+Avg per prediction: 5ms
+```
+
+The loop finishes the prediction in progress, then stops. Elapsed time can go slightly past `<ms>` if one inference is slower than the timeout. Combine with `--infinite` if you want both a timer and the infinite-mode banner; Ctrl+C and `stop_digit_recognizer` still work.
+
 ### Stopping the loop
 
 **Option 1: `stop_digit_recognizer`** (from another terminal)
@@ -419,7 +447,9 @@ digit_recognizer stopped successfully.
 
 **Option 2: Ctrl+C** in the running terminal
 
-Both methods produce a summary on exit:
+**Option 3: `--autostop <ms>`** — the loop exits on its own when the timer elapses
+
+All three methods produce a summary on exit:
 
 ```
 === Stopped ===
@@ -433,8 +463,8 @@ Avg per prediction: 1ms
 
 The infinite loop uses cross-platform file-based signaling:
 
-1. `digit_recognizer --infinite` writes its PID to `.digit_recognizer.pid`
-2. Each iteration, it checks if `.digit_recognizer.stop` exists
+1. `digit_recognizer --infinite` (or `--autostop`) writes its PID to `.digit_recognizer.pid`
+2. Each iteration, it checks if `.digit_recognizer.stop` exists, and whether `--autostop` time has elapsed
 3. `stop_digit_recognizer` creates `.digit_recognizer.stop` and waits up to 30 seconds for the PID file to disappear
 4. On exit, `digit_recognizer` removes both `.pid` and `.stop` files
 
