@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Digit Recognizer — project walkthrough</title>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --panel: #171c24;
+      --ink: #e8edf4;
+      --muted: #9aa6b8;
+      --line: #2a3342;
+      --cpu: #6ee7b7;
+      --gpu: #f4b942;
+      --io: #7eb6ff;
+      --nn: #c4a0ff;
+      --warn: #ff8a7a;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 "Segoe UI", "IBM Plex Sans", system-ui, sans-serif; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 32px 20px 80px; }
+    h1 { font-size: 1.85rem; font-weight: 650; letter-spacing: -0.03em; margin: 0 0 8px; }
+    .lede { color: var(--muted); max-width: 62ch; margin: 0 0 28px; }
+    h2 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); margin: 40px 0 14px; font-weight: 650; }
+    .pipe {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+    .step {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px 10px 14px;
+      min-height: 132px;
+      position: relative;
+    }
+    .step n { display: block; font-size: 0.7rem; color: var(--muted); margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+    .step b { display: block; font-size: 0.92rem; margin-bottom: 4px; }
+    .step p { margin: 0; font-size: 0.78rem; color: var(--muted); }
+    .step::after {
+      content: "→";
+      position: absolute;
+      right: -10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #4a5568;
+      z-index: 1;
+      font-size: 0.85rem;
+    }
+    .step:last-child::after { content: none; }
+    .tag { display: inline-block; font-size: 0.68rem; padding: 1px 7px; border-radius: 999px; border: 1px solid; margin-top: 8px; }
+    .t-io { color: var(--io); border-color: #3a5a86; }
+    .t-cpu { color: var(--cpu); border-color: #2d6a52; }
+    .t-nn { color: var(--nn); border-color: #5b4780; }
+    .t-gpu { color: var(--gpu); border-color: #7a5c18; }
+    .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .mode { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+    .mode h3 { margin: 0 0 10px; font-size: 1rem; }
+    .flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .chip { background: #222a36; border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font-size: 0.78rem; }
+    .arrow { color: #5b677a; }
+    .nn {
+      display: grid;
+      grid-template-columns: auto 1fr auto 1fr auto 1fr auto;
+      gap: 8px;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 18px;
+    }
+    .layer { text-align: center; }
+    .dots { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--nn); opacity: 0.9; }
+    .dot.dim { opacity: 0.25; width: 8px; height: 8px; }
+    .layer small { display: block; margin-top: 8px; color: var(--muted); font-size: 0.75rem; }
+    .layer strong { font-size: 0.95rem; }
+    .conn { height: 2px; background: linear-gradient(90deg, #5b4780, #7eb6ff); opacity: 0.55; }
+    .prep { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 8px; }
+    .prep .step { min-height: 150px; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .path { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+    ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 0.88rem; }
+    li { margin: 4px 0; }
+    code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.82em; background: #222a36; padding: 1px 5px; border-radius: 4px; }
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0 18px; font-size: 0.8rem; color: var(--muted); }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+    footer { margin-top: 48px; color: #6b7688; font-size: 0.8rem; }
+    @media (max-width: 900px) {
+      .pipe, .prep { grid-template-columns: 1fr 1fr; }
+      .step::after { content: none; }
+      .modes, .split, .nn { grid-template-columns: 1fr; }
+      .conn { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Digit Recognizer</h1>
+    <p class="lede">
+      A C++17 MNIST digit OCR tool. Images are preprocessed to a 28×28 vector, then classified by a 3-layer MLP (CPU, or optional ROCm/HIP). Four CLI commands cover train, test, single-digit predict, and multi-digit predict.
+    </p>
+
+    <div class="legend">
+      <span><i style="background:var(--io)"></i>I/O</span>
+      <span><i style="background:var(--cpu)"></i>CPU preprocess</span>
+      <span><i style="background:var(--nn)"></i>Network</span>
+      <span><i style="background:var(--gpu)"></i>Optional GPU</span>
+    </div>
+
+    <h2>End-to-end path</h2>
+    <div class="pipe" aria-label="Main pipeline from image to digit">
+      <div class="step">
+        <n>01</n>
+        <b>Input</b>
+        <p>PNG/JPEG/BMP image, or MNIST IDX files under <code>data/</code></p>
+        <span class="tag t-io">I/O</span>
+      </div>
+      <div class="step">
+        <n>02</n>
+        <b>Load</b>
+        <p>stb_image, or MNIST loader for train/test</p>
+        <span class="tag t-io">I/O</span>
+      </div>
+      <div class="step">
+        <n>03</n>
+        <b>Preprocess</b>
+        <p>Grayscale, invert, crop, 20×20 resize, center on 28×28</p>
+        <span class="tag t-cpu">CPU</span>
+      </div>
+      <div class="step">
+        <n>04</n>
+        <b>Vector</b>
+        <p>784 doubles, pixels scaled to 0.0–1.0</p>
+        <span class="tag t-cpu">CPU</span>
+      </div>
+      <div class="step">
+        <n>05</n>
+        <b>Forward pass</b>
+        <p>Matvec + ReLU + softmax on CPU or HIP kernels</p>
+        <span class="tag t-nn">MLP</span>
+      </div>
+      <div class="step">
+        <n>06</n>
+        <b>Argmax</b>
+        <p>Highest of 10 class probabilities</p>
+        <span class="tag t-nn">MLP</span>
+      </div>
+      <div class="step">
+        <n>07</n>
+        <b>Result</b>
+        <p>Digit 0–9, confidence, optional model save</p>
+        <span class="tag t-io">CLI</span>
+      </div>
+    </div>
+
+    <h2>Four commands</h2>
+    <div class="modes">
+      <div class="mode">
+        <h3>train</h3>
+        <div class="flow">
+          <span class="chip">MNIST train set</span><span class="arrow">→</span>
+          <span class="chip">SGD epochs</span><span class="arrow">→</span>
+          <span class="chip">digit_model.bin</span>
+        </div>
+        <ul>
+          <li>Default: 10 epochs, batch 32, lr 0.005</li>
+          <li>He init, cross-entropy, 784→256→128→10</li>
+        </ul>
+      </div>
+      <div class="mode">
+        <h3>test</h3>
+        <div class="flow">
+          <span class="chip">Load model</span><span class="arrow">→</span>
+          <span class="chip">MNIST test set</span><span class="arrow">→</span>
+          <span class="chip">Accuracy %</span>
+        </div>
+        <ul>
+          <li>10,000 labeled 28×28 images</li>
+          <li>Reports overall test accuracy</li>
+        </ul>
+      </div>
+      <div class="mode">
+        <h3>predict</h3>
+        <div class="flow">
+          <span class="chip">Image or folder</span><span class="arrow">→</span>
+          <span class="chip">Preprocess</span><span class="arrow">→</span>
+          <span class="chip">One digit</span>
+        </div>
+        <ul>
+          <li><code>--infinite</code> loops random files until stop</li>
+          <li>Prints digit, confidence, all 10 probs</li>
+        </ul>
+      </div>
+      <div class="mode">
+        <h3>predict-multi</h3>
+        <div class="flow">
+          <span class="chip">Wide image</span><span class="arrow">→</span>
+          <span class="chip">Split on gaps</span><span class="arrow">→</span>
+          <span class="chip">Digit string</span>
+        </div>
+        <ul>
+          <li>Vertical whitespace segments characters</li>
+          <li>Each crop runs the same recognizer</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>Image preprocessing (predict path)</h2>
+    <div class="prep" aria-label="Seven preprocessing stages">
+      <div class="step"><n>1</n><b>Load</b><p>Any size, RGB or gray via stb_image</p></div>
+      <div class="step"><n>2</n><b>Grayscale</b><p>0.299R + 0.587G + 0.114B</p></div>
+      <div class="step"><n>3</n><b>Auto-invert</b><p>If border is bright, invert to MNIST white-on-black</p></div>
+      <div class="step"><n>4</n><b>Crop</b><p>Tight bounding box around ink</p></div>
+      <div class="step"><n>5</n><b>Resize</b><p>Aspect-preserving bilinear into 20×20</p></div>
+      <div class="step"><n>6</n><b>Center</b><p>Place 20×20 digit on 28×28 canvas</p></div>
+      <div class="step"><n>7</n><b>Normalize</b><p>Bytes → doubles in [0, 1], length 784</p></div>
+    </div>
+
+    <h2>Network</h2>
+    <div class="nn" aria-label="Three-layer multilayer perceptron">
+      <div class="layer">
+        <div class="dots">
+          <span class="dot"></span><span class="dot"></span><span class="dot dim"></span>
+          <span class="dot"></span><span class="dot"></span>
+        </div>
+        <strong>Input</strong>
+        <small>784 · 28×28</small>
+      </div>
+      <div class="conn"></div>
+      <div class="layer">
+        <div class="dots">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="dot dim"></span><span class="dot"></span>
+        </div>
+        <strong>Hidden 1</strong>
+        <small>256 · ReLU</small>
+      </div>
+      <div class="conn"></div>
+      <div class="layer">
+        <div class="dots">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="dot dim"></span>
+        </div>
+        <strong>Hidden 2</strong>
+        <small>128 · ReLU</small>
+      </div>
+      <div class="conn"></div>
+      <div class="layer">
+        <div class="dots">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+        <strong>Output</strong>
+        <small>10 · Softmax</small>
+      </div>
+    </div>
+
+    <h2>Compute dispatch</h2>
+    <div class="split">
+      <div class="path">
+        <h3 style="margin:0 0 8px;font-size:1rem;color:var(--cpu)">CPU (default Windows build)</h3>
+        <p style="margin:0;color:var(--muted);font-size:0.88rem;">CMake without <code>ENABLE_HIP</code>. Forward and backprop stay in <code>neural_network.cpp</code>.</p>
+        <ul>
+          <li>Matvec, ReLU, softmax, SGD on host</li>
+          <li><code>--gpu</code> logs that HIP was not built</li>
+        </ul>
+      </div>
+      <div class="path">
+        <h3 style="margin:0 0 8px;font-size:1rem;color:var(--gpu)">GPU (Linux, <code>-DENABLE_HIP=ON</code>)</h3>
+        <p style="margin:0;color:var(--muted);font-size:0.88rem;">Six HIP kernels in <code>gpu_kernels.hip</code>, linked with <code>hip::device</code> / <code>hip::host</code>.</p>
+        <ul>
+          <li>matvec, relu, softmax, output_delta, backprop_delta, update_weights</li>
+          <li>Optional <code>--gpudelay</code> / <code>--gpumem</code> for profiler stress</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>What you built</h2>
+    <div class="flow" style="margin-bottom:10px">
+      <span class="chip">CMake + MSVC</span><span class="arrow">→</span>
+      <span class="chip">build/Release/digit_recognizer.exe</span>
+      <span class="chip">generate_samples.exe</span>
+      <span class="chip">stress_test.exe</span>
+      <span class="chip">stop_digit_recognizer.exe</span>
+    </div>
+    <p class="lede" style="margin:0">CPU-only Release on this machine. Train after <code>scripts/download_mnist.ps1</code>.</p>
+
+    <footer>digit-recognizer · njobypet · local overview, not a substitute for README.md</footer>
+  </div>
+</body>
+</html>
