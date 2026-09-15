@@ -88,12 +88,51 @@
     code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.82em; background: #222a36; padding: 1px 5px; border-radius: 4px; }
     .legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0 18px; font-size: 0.8rem; color: var(--muted); }
     .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+    .wf { display: grid; grid-template-columns: 30px 1fr 96px 1fr; gap: 7px; }
+    .wf-head { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+    .wf-n { color: #6b7688; font-size: 0.72rem; font-variant-numeric: tabular-nums; padding-top: 12px; text-align: right; }
+    .cell { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; }
+    .cell.host { border-left: 3px solid var(--cpu); }
+    .cell.dev { border-left: 3px solid var(--gpu); }
+    .cell.idle { background: transparent; border-style: dashed; border-left-width: 1px; opacity: 0.35; }
+    .cell b { display: block; font-size: 0.83rem; font-weight: 500; }
+    .cell span { font-size: 0.74rem; color: var(--muted); }
+    .xfer { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-size: 0.66rem; color: var(--io); text-align: center; }
+    .xfer .g { font-size: 1.05rem; line-height: 1; }
+    .xfer.none { color: #3d4757; }
+    .bufs { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 7px; }
+    .buf { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--nn); border-radius: 6px; padding: 8px 10px; }
+    .buf.persist { border-left-color: var(--gpu); }
+    .buf tt { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.78rem; }
+    .buf small { display: block; color: var(--muted); font-size: 0.72rem; margin-top: 3px; }
+    .kerns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .kern { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+    .kern h3 { margin: 0; font-size: 0.9rem; font-weight: 500; }
+    .kern .sig { margin: 2px 0 10px; font-size: 0.73rem; color: var(--muted); font-family: Consolas, "Cascadia Mono", monospace; }
+    .blocks { display: flex; gap: 3px; flex-wrap: wrap; }
+    .blk { width: 14px; height: 14px; border-radius: 3px; background: #2f3b4d; border: 1px solid #44536b; }
+    .blk.hot { background: var(--gpu); border-color: #c69a2e; }
+    .threads { display: flex; gap: 2px; flex-wrap: wrap; margin-top: 8px; }
+    .thr { width: 7px; height: 13px; border-radius: 1px; background: var(--cpu); }
+    .thr.off { background: #394354; }
+    .kmeta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.73rem; color: var(--muted); margin-top: 10px; }
+    .kmeta b { color: var(--ink); font-weight: 500; }
+    .tm { display: grid; grid-template-columns: 52px 1fr 78px; gap: 6px 10px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+    .tm .tid { font-size: 0.74rem; color: var(--cpu); font-family: Consolas, "Cascadia Mono", monospace; }
+    .tm .wrow { height: 13px; border-radius: 3px; background: linear-gradient(90deg, rgba(196,160,255,0.9), rgba(126,182,255,0.25)); }
+    .tm .out { font-size: 0.74rem; color: var(--muted); font-family: Consolas, "Cascadia Mono", monospace; }
+    .tm .ell { grid-column: 1 / -1; text-align: center; color: #5b677a; font-size: 0.85rem; }
+    .tm .tmhead { grid-column: 1 / -1; font-size: 0.74rem; color: var(--muted); margin-bottom: 2px; }
     footer { margin-top: 48px; color: #6b7688; font-size: 0.8rem; }
     @media (max-width: 900px) {
       .pipe, .prep { grid-template-columns: 1fr 1fr; }
       .step::after { content: none; }
-      .modes, .split, .nn { grid-template-columns: 1fr; }
+      .modes, .split, .nn, .kerns { grid-template-columns: 1fr; }
       .conn { display: none; }
+      .wf { grid-template-columns: 1fr; }
+      .wf-head, .wf-n, .cell.idle { display: none; }
+      .tm { grid-template-columns: 46px 1fr; }
+      .tm .out { grid-column: 2; }
     }
   </style>
 </head>
@@ -191,7 +230,7 @@
           <span class="chip">One digit</span>
         </div>
         <ul>
-          <li><code>--infinite</code> loops random files until stop</li>
+          <li><code>--infinite</code> loops random files until stop, <code>--autostop &lt;ms&gt;</code> for a timed run</li>
           <li>Prints digit, confidence, all 10 probs</li>
         </ul>
       </div>
@@ -277,6 +316,251 @@
           <li>Optional <code>--gpudelay</code> / <code>--gpumem</code> for profiler stress</li>
         </ul>
       </div>
+    </div>
+
+    <h2>Step by step: CPU buffer → GPU → back to CPU</h2>
+    <p class="lede">One <code>predict</code> with the HIP build. Host rows are <code>std::vector</code> memory, device rows are <code>hipMalloc</code> memory, the middle column is every <code>hipMemcpy</code> that crosses the bus.</p>
+    <div class="wf" role="group" aria-label="Host and device steps for one GPU prediction">
+      <div class="wf-head"></div>
+      <div class="wf-head">Host (CPU)</div>
+      <div class="wf-head">Bus</div>
+      <div class="wf-head">Device (GPU)</div>
+
+      <div class="wf-n">01</div>
+      <div class="cell host"><b>load_model</b><span>Weights into <code>layers_</code> — nested <code>std::vector&lt;double&gt;</code></span></div>
+      <div class="xfer none"><span class="g">·</span>no copy</div>
+      <div class="cell dev idle"><span>Idle</span></div>
+
+      <div class="wf-n">02</div>
+      <div class="cell host"><b>Flatten row-major</b><span>Each layer into one contiguous <code>flat</code> buffer</span></div>
+      <div class="xfer none"><span class="g">·</span>no copy</div>
+      <div class="cell dev idle"><span>Idle</span></div>
+
+      <div class="wf-n">03</div>
+      <div class="cell host idle"><span>Waiting</span></div>
+      <div class="xfer none"><span class="g">·</span>alloc only</div>
+      <div class="cell dev"><b>hipMalloc weights</b><span><code>d_weights</code> + <code>d_biases</code> per layer, 1.79 MB total</span></div>
+
+      <div class="wf-n">04</div>
+      <div class="cell host"><b>flat.data()</b><span>Source of the upload</span></div>
+      <div class="xfer"><span class="g">→</span>H2D<br>1.79 MB</div>
+      <div class="cell dev"><b>d_weights, d_biases</b><span>Uploaded once per model load</span></div>
+
+      <div class="wf-n">05</div>
+      <div class="cell host idle"><span>Waiting</span></div>
+      <div class="xfer none"><span class="g">·</span>alloc only</div>
+      <div class="cell dev"><b>hipMalloc scratch</b><span>Activations, pre-activations, deltas, target — reused every image</span></div>
+
+      <div class="wf-n">06</div>
+      <div class="cell host"><b>Preprocess image</b><span>784 doubles = 6,272 bytes on the host heap</span></div>
+      <div class="xfer none"><span class="g">·</span>no copy</div>
+      <div class="cell dev idle"><span>Idle</span></div>
+
+      <div class="wf-n">07</div>
+      <div class="cell host"><b>input.data()</b><span>28×28 normalized pixels</span></div>
+      <div class="xfer"><span class="g">→</span>H2D<br>6,272 B</div>
+      <div class="cell dev"><b>activations[0]</b><span>Input vector now in device memory</span></div>
+
+      <div class="wf-n">08</div>
+      <div class="cell host idle"><span>Blocked on the stream</span></div>
+      <div class="xfer none"><span class="g">·</span>device only</div>
+      <div class="cell dev"><b>kernel_matvec → kernel_relu</b><span>Layer 0, 784 → 256, reads <code>d_weights</code>, writes <code>activations[1]</code></span></div>
+
+      <div class="wf-n">09</div>
+      <div class="cell host idle"><span>Blocked on the stream</span></div>
+      <div class="xfer none"><span class="g">·</span>device only</div>
+      <div class="cell dev"><b>kernel_matvec → kernel_relu</b><span>Layer 1, 256 → 128, writes <code>activations[2]</code></span></div>
+
+      <div class="wf-n">10</div>
+      <div class="cell host idle"><span>Blocked on the stream</span></div>
+      <div class="xfer none"><span class="g">·</span>device only</div>
+      <div class="cell dev"><b>kernel_matvec → kernel_softmax</b><span>Layer 2, 128 → 10, writes <code>activations[3]</code> in place</span></div>
+
+      <div class="wf-n">11</div>
+      <div class="cell host idle"><span>Waiting</span></div>
+      <div class="xfer none"><span class="g">·</span>barrier</div>
+      <div class="cell dev"><b>hipDeviceSynchronize</b><span>All queued kernels must finish before the read-back</span></div>
+
+      <div class="wf-n">12</div>
+      <div class="cell host"><b>result vector</b><span>10 probabilities land in host memory</span></div>
+      <div class="xfer"><span class="g">←</span>D2H<br>80 B</div>
+      <div class="cell dev"><b>activations[3]</b><span>Softmax output</span></div>
+
+      <div class="wf-n">13</div>
+      <div class="cell host"><b>argmax + print</b><span>Predicted digit and confidence</span></div>
+      <div class="xfer none"><span class="g">·</span>no copy</div>
+      <div class="cell dev idle"><span>Scratch kept for the next image</span></div>
+    </div>
+
+    <h2>Extra steps when training</h2>
+    <div class="wf" role="group" aria-label="Additional host and device steps during training">
+      <div class="wf-head"></div>
+      <div class="wf-head">Host (CPU)</div>
+      <div class="wf-head">Bus</div>
+      <div class="wf-head">Device (GPU)</div>
+
+      <div class="wf-n">T1</div>
+      <div class="cell host"><b>One-hot target</b><span>10 doubles per sample</span></div>
+      <div class="xfer"><span class="g">→</span>H2D<br>80 B</div>
+      <div class="cell dev"><b>target buffer</b><span>Compared against the softmax output</span></div>
+
+      <div class="wf-n">T2</div>
+      <div class="cell host idle"><span>Waiting</span></div>
+      <div class="xfer none"><span class="g">·</span>device only</div>
+      <div class="cell dev"><b>kernel_output_delta</b><span><code>delta = output − target</code> into <code>deltas[2]</code></span></div>
+
+      <div class="wf-n">T3</div>
+      <div class="cell host idle"><span>Waiting</span></div>
+      <div class="xfer none"><span class="g">·</span>device only</div>
+      <div class="cell dev"><b>kernel_backprop_delta</b><span>Walks layers backward, fills <code>deltas[1]</code>, <code>deltas[0]</code></span></div>
+
+      <div class="wf-n">T4</div>
+      <div class="cell host idle"><span>Waiting</span></div>
+      <div class="xfer none"><span class="g">·</span>device only</div>
+      <div class="cell dev"><b>kernel_update_weights</b><span>SGD edits <code>d_weights</code> / <code>d_biases</code> in place — no copy back</span></div>
+
+      <div class="wf-n">T5</div>
+      <div class="cell host"><b>layers_ refreshed</b><span>Needed so the model can be saved to disk</span></div>
+      <div class="xfer"><span class="g">←</span>D2H<br>1.79 MB</div>
+      <div class="cell dev"><b>d_weights, d_biases</b><span>Downloaded once per epoch, not per sample</span></div>
+    </div>
+
+    <h2>Device buffers</h2>
+    <div class="bufs" aria-label="Device memory allocations and sizes">
+      <div class="buf persist"><tt>d_weights[0]</tt><small>256 × 784 doubles · 1,605,632 B</small></div>
+      <div class="buf persist"><tt>d_biases[0]</tt><small>256 doubles · 2,048 B</small></div>
+      <div class="buf persist"><tt>d_weights[1]</tt><small>128 × 256 doubles · 262,144 B</small></div>
+      <div class="buf persist"><tt>d_biases[1]</tt><small>128 doubles · 1,024 B</small></div>
+      <div class="buf persist"><tt>d_weights[2]</tt><small>10 × 128 doubles · 10,240 B</small></div>
+      <div class="buf persist"><tt>d_biases[2]</tt><small>10 doubles · 80 B</small></div>
+      <div class="buf"><tt>activations[0]</tt><small>784 doubles · 6,272 B · input</small></div>
+      <div class="buf"><tt>activations[1..3]</tt><small>256 / 128 / 10 doubles · 3,152 B</small></div>
+      <div class="buf"><tt>pre_activations[0..2]</tt><small>256 / 128 / 10 doubles · 3,152 B</small></div>
+      <div class="buf"><tt>deltas[0..2]</tt><small>256 / 128 / 10 doubles · 3,152 B · training</small></div>
+      <div class="buf"><tt>target</tt><small>10 doubles · 80 B · training</small></div>
+    </div>
+    <div class="legend" style="margin-top:12px">
+      <span><i style="background:var(--gpu)"></i>Persistent — uploaded once, ≈1.79 MB</span>
+      <span><i style="background:var(--nn)"></i>Scratch — allocated once, reused, ≈15.4 KB</span>
+    </div>
+
+    <h2>Kernels, grids and threads</h2>
+    <div class="kerns">
+      <div class="kern">
+        <h3>kernel_matvec</h3>
+        <p class="sig">out[i] = bias[i] + Σ W[i][j] · x[j]</p>
+        <div class="blocks" aria-hidden="true"><span class="blk hot"></span></div>
+        <div class="threads" aria-hidden="true">
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+        </div>
+        <div class="kmeta">
+          <span>grid <b>(1,1,1)</b></span>
+          <span>block <b>(256,1,1)</b></span>
+          <span>1 thread per output row</span>
+        </div>
+      </div>
+
+      <div class="kern">
+        <h3>kernel_relu</h3>
+        <p class="sig">data[i] = max(0, data[i])</p>
+        <div class="blocks" aria-hidden="true"><span class="blk hot"></span></div>
+        <div class="threads" aria-hidden="true">
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+        </div>
+        <div class="kmeta">
+          <span>grid <b>(1,1,1)</b></span>
+          <span>block <b>(256,1,1)</b></span>
+          <span>in place, fully parallel</span>
+        </div>
+      </div>
+
+      <div class="kern">
+        <h3>kernel_softmax</h3>
+        <p class="sig">exp(x − max) / Σ exp(x − max)</p>
+        <div class="blocks" aria-hidden="true"><span class="blk hot"></span></div>
+        <div class="threads" aria-hidden="true">
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span>
+          <span class="thr off"></span><span class="thr off"></span><span class="thr off"></span>
+          <span class="thr off"></span><span class="thr off"></span><span class="thr off"></span>
+        </div>
+        <div class="kmeta">
+          <span>grid <b>(1,1,1)</b></span>
+          <span>block <b>(32,1,1)</b></span>
+          <span>shared <b>256 B</b></span>
+          <span>10 active, rest padding</span>
+        </div>
+      </div>
+
+      <div class="kern">
+        <h3>kernel_output_delta</h3>
+        <p class="sig">delta[i] = output[i] − target[i]</p>
+        <div class="blocks" aria-hidden="true"><span class="blk hot"></span></div>
+        <div class="threads" aria-hidden="true">
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span>
+          <span class="thr off"></span><span class="thr off"></span><span class="thr off"></span>
+          <span class="thr off"></span><span class="thr off"></span><span class="thr off"></span>
+        </div>
+        <div class="kmeta">
+          <span>grid <b>(1,1,1)</b></span>
+          <span>block <b>(256,1,1)</b></span>
+          <span>10 of 256 threads do work</span>
+        </div>
+      </div>
+
+      <div class="kern">
+        <h3>kernel_backprop_delta</h3>
+        <p class="sig">delta[i] = relu'(z[i]) · Σ Wnext[j][i] · deltaNext[j]</p>
+        <div class="blocks" aria-hidden="true"><span class="blk hot"></span></div>
+        <div class="threads" aria-hidden="true">
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+          <span class="thr"></span><span class="thr"></span><span class="thr"></span><span class="thr"></span>
+        </div>
+        <div class="kmeta">
+          <span>grid <b>(1,1,1)</b></span>
+          <span>block <b>(256,1,1)</b></span>
+          <span>each thread loops the next layer</span>
+        </div>
+      </div>
+
+      <div class="kern">
+        <h3>kernel_update_weights</h3>
+        <p class="sig">W[i][j] −= lr · delta[i] · prevAct[j]</p>
+        <div class="blocks" aria-hidden="true">
+          <span class="blk hot"></span><span class="blk hot"></span><span class="blk hot"></span><span class="blk hot"></span>
+          <span class="blk hot"></span><span class="blk hot"></span><span class="blk hot"></span><span class="blk hot"></span>
+          <span class="blk hot"></span><span class="blk hot"></span><span class="blk hot"></span><span class="blk hot"></span>
+          <span class="blk hot"></span><span class="blk hot"></span><span class="blk hot"></span><span class="blk hot"></span>
+          <span class="blk"></span><span class="blk"></span><span class="blk"></span><span class="blk"></span>
+        </div>
+        <div class="kmeta">
+          <span>grid <b>(784,1,1)</b> for layer 0</span>
+          <span>block <b>(256,1,1)</b></span>
+          <span>1 thread per weight; first 256 also update biases</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>How threads map to data (kernel_matvec, layer 0)</h2>
+    <div class="tm" aria-label="Thread to output element mapping for the matvec kernel">
+      <div class="tmhead">Every thread computes <code>i = blockIdx.x · blockDim.x + threadIdx.x</code>, reads row <code>i</code> of the weight matrix plus the shared 784-element input, and writes one output element. Threads with <code>i ≥ rows</code> return immediately.</div>
+      <div class="tid">t0</div><div class="wrow"></div><div class="out">out[0]</div>
+      <div class="tid">t1</div><div class="wrow"></div><div class="out">out[1]</div>
+      <div class="tid">t2</div><div class="wrow"></div><div class="out">out[2]</div>
+      <div class="ell">⋮ 784 weights read per thread ⋮</div>
+      <div class="tid">t254</div><div class="wrow"></div><div class="out">out[254]</div>
+      <div class="tid">t255</div><div class="wrow"></div><div class="out">out[255]</div>
     </div>
 
     <h2>What you built</h2>
