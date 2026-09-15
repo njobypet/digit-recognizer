@@ -20,6 +20,7 @@ set(SOURCES
     src/image_processor.cpp
     src/digit_recognizer.cpp
     src/mnist_loader.cpp
+    src/inject.cpp
 )
 
 # ---- Try to find ROCm/HIP when requested ----

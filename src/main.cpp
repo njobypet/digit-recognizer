@@ -19,22 +19,6 @@
 
 namespace fs = std::filesystem;
 
-#ifndef USE_HIP
-bool digitrec::OpLog::cpu_enabled = false;
-bool digitrec::OpLog::gpu_enabled = false;
-bool digitrec::GpuDelay::enabled = false;
-bool digitrec::GpuMemSpike::enabled = false;
-
-bool digitrec::GpuDelay::should_delay() { return false; }
-int digitrec::GpuDelay::random_delay_ms() { return 0; }
-void digitrec::GpuDelay::apply(const char* kernel_name, std::string& display_name) {
-    display_name = kernel_name;
-}
-bool digitrec::GpuMemSpike::should_spike() { return false; }
-size_t digitrec::GpuMemSpike::random_size() { return 0; }
-void digitrec::GpuMemSpike::apply(const char*, std::string&, const void*, size_t) {}
-#endif
-
 static const char* PID_FILE = ".digit_recognizer.pid";
 static const char* STOP_FILE = ".digit_recognizer.stop";
 

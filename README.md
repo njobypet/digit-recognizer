@@ -517,7 +517,7 @@ When a kernel is selected for delay, its name is suffixed with `_delay` in all l
 | Delay range | 1ms to 100ms (uniform random) |
 | Naming | Delayed kernels: `kernel_matvec_delay`, `kernel_relu_delay`, etc. |
 | Non-delayed | Normal kernel name: `kernel_matvec`, `kernel_relu`, etc. |
-| Scope | Applies to all 6 GPU kernels equally |
+| Scope | Applies to all 6 GPU kernels equally (and the matching CPU ops if HIP is not in use) |
 | Log tag | `[DELAY ...]` line printed before the sleep |
 
 ## GPU Memory Spike Injection (`--gpumem`)
@@ -589,6 +589,7 @@ For each affected kernel, the spike follows these steps:
 | Zero | GPU kernel resets every byte to 0 before free |
 | HIP optimizations | Disabled (`-O0 -fno-fast-math`) so bitflip/zero execute faithfully |
 | Combinable | Can be used together with `--gpudelay` (a kernel can get both `_delay` and `_mem` suffixes) |
+| CPU-only builds | Same 10% spikes around equivalent CPU ops (malloc / fill / bitflip / zero / free) |
 | Log tag | `[GPUMEM ...]` lines for each step of the lifecycle |
 
 ## GPU Kernels

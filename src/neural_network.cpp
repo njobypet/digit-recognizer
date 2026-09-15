@@ -10,6 +10,16 @@
 
 namespace digitrec {
 
+namespace {
+
+void inject_before_op(const char* kernel_name, const void* src, size_t bytes) {
+    std::string name;
+    GpuDelay::apply(kernel_name, name);
+    GpuMemSpike::apply(kernel_name, name, src, bytes, false);
+}
+
+} // namespace
+
 NeuralNetwork::NeuralNetwork(const std::vector<int>& layer_sizes, double learning_rate)
     : layer_sizes_(layer_sizes)
     , learning_rate_(learning_rate)
@@ -146,14 +156,18 @@ std::vector<double> NeuralNetwork::predict_cpu(const std::vector<double>& input)
         OpLog::cpu(("  " + layer_label + ": output buffer allocated on CPU").c_str(),
                    out_size * sizeof(double));
 
-        current = forward_layer_cpu(current, layers_[i], !is_last);
+        inject_before_op("kernel_matvec", current.data(), current.size() * sizeof(double));
+        current = forward_layer_cpu(current, layers_[i], false);
 
         if (!is_last) {
+            inject_before_op("kernel_relu", current.data(), current.size() * sizeof(double));
+            current = relu(current);
             OpLog::cpu_phase(("  " + layer_label + ": applied ReLU activation").c_str());
         }
     }
 
     OpLog::cpu_phase("  Output layer: computing softmax on CPU...");
+    inject_before_op("kernel_softmax", current.data(), current.size() * sizeof(double));
     auto result = softmax(current);
     OpLog::cpu_phase("--- CPU predict: forward pass complete ---");
     return result;
@@ -171,6 +185,7 @@ void NeuralNetwork::train_cpu(const std::vector<double>& input,
         int out_size = static_cast<int>(layers_[i].biases.size());
         std::vector<double> z(out_size);
 
+        inject_before_op("kernel_matvec", current.data(), current.size() * sizeof(double));
         for (int r = 0; r < out_size; ++r) {
             double sum = layers_[i].biases[r];
             for (size_t c = 0; c < current.size(); ++c) {
@@ -181,8 +196,10 @@ void NeuralNetwork::train_cpu(const std::vector<double>& input,
         pre_activations.push_back(z);
 
         if (is_last) {
+            inject_before_op("kernel_softmax", z.data(), z.size() * sizeof(double));
             current = softmax(z);
         } else {
+            inject_before_op("kernel_relu", z.data(), z.size() * sizeof(double));
             current = relu(z);
         }
         activations.push_back(current);
@@ -194,6 +211,7 @@ void NeuralNetwork::train_cpu(const std::vector<double>& input,
     {
         auto& output = activations.back();
         deltas[num_layers - 1].resize(output.size());
+        inject_before_op("kernel_output_delta", output.data(), output.size() * sizeof(double));
         for (size_t i = 0; i < output.size(); ++i) {
             deltas[num_layers - 1][i] = output[i] - target[i];
         }
@@ -206,6 +224,7 @@ void NeuralNetwork::train_cpu(const std::vector<double>& input,
         int next_size = static_cast<int>(deltas[l + 1].size());
 
         deltas[l].resize(current_size, 0.0);
+        inject_before_op("kernel_backprop_delta", z.data(), z.size() * sizeof(double));
         for (int i = 0; i < current_size; ++i) {
             double sum = 0.0;
             for (int j = 0; j < next_size; ++j) {
@@ -220,6 +239,7 @@ void NeuralNetwork::train_cpu(const std::vector<double>& input,
         auto& delta = deltas[l];
         auto& prev_act = activations[l];
 
+        inject_before_op("kernel_update_weights", prev_act.data(), prev_act.size() * sizeof(double));
         for (size_t i = 0; i < delta.size(); ++i) {
             for (size_t j = 0; j < prev_act.size(); ++j) {
                 layer.weights[i][j] -= learning_rate_ * delta[i] * prev_act[j];

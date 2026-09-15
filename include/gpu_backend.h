@@ -77,13 +77,15 @@ struct GpuMemSpike {
 
     static bool should_spike();
     static size_t random_size();
-    // d_image_src: device pointer to image/activation data to fill the allocation with
-    // image_bytes: size of the source data in bytes
+    // image_src: activation/image bytes used to tile-fill the spike buffer
+    // src_on_device: true if image_src is a HIP device pointer
     static void apply(const char* kernel_name, std::string& display_name,
-                      const void* d_image_src = nullptr, size_t image_bytes = 0);
+                      const void* image_src = nullptr, size_t image_bytes = 0,
+                      bool src_on_device = false);
 };
 
 #ifdef USE_HIP
+void launch_kernel_memzero(unsigned char* ptr, size_t bytes);
 
 struct KernelLog {
     static bool enabled;
